@@ -1,28 +1,42 @@
-use cognitive_grid::experiments::runner::{
-    run_batch_and_save, AgentType, ExperimentConfig,
-};
+use cognitive_grid::experiments::runner::{run_batch_and_save, ExperimentConfig, AgentType};
+use std::error::Error;
 
-fn main() {
-    // Base configuration for experiments.
-    let mut cfg = ExperimentConfig::default();
-    cfg.episodes = 50;
-    cfg.max_steps = 500;
-    cfg.obstacle_density = 0.2;
+fn main() -> Result<(), Box<dyn Error>> {
+    println!("Starting Research Experiments...");
 
-    let agents = [
-        AgentType::Fsm,
-        AgentType::AStar,
-        AgentType::BehaviorTree,
-    ];
+    // 1. Run FSM Experiment
+    println!("Running FSM Batch...");
+    let config_fsm = ExperimentConfig {
+        agent_type: AgentType::Fsm,
+        episodes: 50,
+        obstacle_density: 0.2, // 20% obstacles
+        ..Default::default()
+    };
+    let path = run_batch_and_save(&config_fsm)?;
+    println!("Saved FSM results to: {:?}", path);
 
-    for agent in agents {
-        cfg.agent_type = agent;
-        println!("Running experiments for {:?} agent...", agent);
+    // 2. Run A* Experiment
+    println!("Running A* Batch...");
+    let config_astar = ExperimentConfig {
+        agent_type: AgentType::AStar,
+        episodes: 50,
+        obstacle_density: 0.2,
+        ..Default::default()
+    };
+    let path = run_batch_and_save(&config_astar)?;
+    println!("Saved A* results to: {:?}", path);
 
-        match run_batch_and_save(&cfg) {
-            Ok(path) => println!("  -> Results written to {:?}", path),
-            Err(e) => eprintln!("  -> Failed to run experiments: {e}"),
-        }
-    }
+    // 3. Run BT Experiment
+    println!("Running Behavior Tree Batch...");
+    let config_bt = ExperimentConfig {
+        agent_type: AgentType::BehaviorTree,
+        episodes: 50,
+        obstacle_density: 0.2,
+        ..Default::default()
+    };
+    let path = run_batch_and_save(&config_bt)?;
+    println!("Saved BT results to: {:?}", path);
+
+    println!("All experiments completed successfully.");
+    Ok(())
 }
-

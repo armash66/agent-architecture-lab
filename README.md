@@ -53,13 +53,30 @@ The project follows a clean separation of concerns:
 | `src/logging` | Metrics collection and structured data export. |
 | `src/experiments` | Batch runner for conducting multiple trials. |
 
+## 🧪 Experiments
+
+Cognitive Grid includes a batch runner to compare agents:
+
+```bash
+cargo run --bin run_experiments
+```
+
+This will run 50 episodes for each agent type (FSM, A*, Behavior Tree) and save the results to `experiments/data/`.
+
+### Analyzing Results
+The output data is in CSV format, containing:
+- `agent_type`: The architecture used.
+- `steps`: Steps taken to reach the goal.
+- `energy_remaining`: Remaining energy (for FSM/BT).
+- `success`: Whether the goal was reached.
+
 ## 🗺️ Roadmap
 
 - [x] **Stage 1**: Core Grid Engine (State, World, Game Loop)
 - [x] **Stage 2**: Finite State Machine (FSM) Agent
-- [ ] **Stage 3**: A* Pathfinding Agent
-- [ ] **Stage 4**: Behavior Tree Agent
-- [ ] **Stage 5**: Structured Logging & Experiment Runner
+- [x] **Stage 3**: A* Pathfinding Agent
+- [x] **Stage 4**: Behavior Tree Agent
+- [x] **Stage 5**: Structured Logging & Experiment Runner
 
 ## 📄 License
 
