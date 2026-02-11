@@ -110,9 +110,9 @@ cargo build --release
 You can run individual agent demos to watch them in the terminal:
 
 ```bash
-cargo run --bin stage2_fsm           # Watch FSM Agent
-cargo run --bin stage3_astar         # Watch A* Agent
-cargo run --bin stage4_behavior_tree # Watch Behavior Tree Agent
+cargo run --bin demo_fsm           # Watch FSM Agent
+cargo run --bin demo_astar         # Watch A* Agent
+cargo run --bin demo_behavior_tree # Watch Behavior Tree Agent
 ```
 
 ---
@@ -141,14 +141,15 @@ Results are saved to `experiments/data/<timestamp>_results.csv`.
 
 ---
 
-## 🗺️ Roadmap
+## 🤝 Contributing
 
-- [x] **Stage 1**: Core Grid Engine (State, World, Game Loop)
-- [x] **Stage 2**: Finite State Machine (FSM) Agent
-- [x] **Stage 3**: A* Pathfinding Agent
-- [x] **Stage 4**: Behavior Tree Agent
-- [x] **Stage 5**: Structured Logging & Experiment Runner
-- [x] **Stage 6**: Documentation & Polish
+Contributions are welcome! Whether it's adding a new agent architecture (e.g., Reinforcement Learning), improving the heuristic function, or visualizing the simulation, feel free to open a PR.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-agent`)
+3. Commit your changes (`git commit -m 'Add AmazingAgent'`)
+4. Push to the branch (`git push origin feature/amazing-agent`)
+5. Open a Pull Request
 
 ## 📄 License
 
