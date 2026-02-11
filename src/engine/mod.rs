@@ -1,4 +1,2 @@
-pub mod world;
-pub mod grid;
-pub mod state;
-pub mod game_loop;
+// Stage 1: no engine modules are needed yet.
+// Keep this file minimal so the project compiles cleanly.
