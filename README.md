@@ -1,29 +1,100 @@
 # Cognitive Grid 🧠
 
-**A modular grid-world framework for comparing FSM, A*, and Behavior Tree agents.**  
-**Designed for experimenting with structured decision-making in a controlled environment.**
+**A modular, high-performance 2D grid simulation framework for comparing agent architectures.**
+
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Rust](https://img.shields.io/badge/built_with-Rust-orange.svg)
 
 ---
 
-## 🚀 Overview
+## 📖 Overview
 
-**Cognitive Grid** is a minimal, high-performance 2D simulation engine written in Rust. It serves as an experimentation lab for cognitive modeling, allowing researchers and developers to implement, compare, and analyze different agent architectures in identical environmental conditions.
+**Cognitive Grid** is a research lab for experimenting with structured decision-making in controlled environments. It provides a standardized grid-world engine where different agent architectures—from simple State Machines to complex Behavior Trees—can be implemented, benchmarked, and analyzed under identical conditions.
 
-The framework provides the scaffolding to answer questions like:
-- *How does a Behavior Tree compare to a Finite State Machine in dynamic environments?*
-- *What is the cost of A* pathfinding vs. reactive heuristics?*
+The framework is designed to answer:
+- *How does Agent A compare to Agent B in terms of energy efficiency?*
+- *What is the computational cost of planning (A*) vs. reacting (FSM)?*
+- *How do Behavior Trees handle dynamic objectives compared to state machines?*
 
 ## ✨ Key Features
 
 - **⚡ Lightweight Engine**: Custom 2D grid world with obstacles, goals, and hazards.
 - **🤖 Modular Agents**:
-  - **Finite State Machines (FSM)**: Deterministic state-based logic.
+  - **Finite State Machines (FSM)**: Deterministic, state-based logic.
   - **A* Pathfinding**: Optimal path planning with Manhattan heuristics.
-  - **Behavior Trees (BT)**: Hierarchical, modular decision making (*In Progress*).
-- **📊 Metric Logging**: Track energy usage, steps taken, and success rates (*In Progress*).
+  - **Behavior Trees (BT)**: Hierarchical, modular decision-making.
+- **📊 Metric Logging**: Automated CSV export of steps, energy, and success rates.
 - **🧪 Experiment Runner**: Headless batch execution for statistical analysis.
 
-## 🛠️ Getting Started
+---
+
+## 🏗️ Architecture
+
+The system is built on a strict separation of concerns between the **Engine** (physics/rules) and the **Agents** (decision logic).
+
+```mermaid
+graph TD
+    User[User / Experiment Runner] -->|Initializes| World
+    World -->|Owns| Grid
+    World -->|Owns| Agent["Box<dyn Agent>"]
+    
+    subgraph Engine
+        Grid[Grid Map]
+        State[World State]
+    end
+    
+    subgraph Agents
+        FSM[FSM Agent]
+        AStar[A* Agent]
+        BT[Behavior Tree Agent]
+    end
+    
+    Agent -.-> FSM
+    Agent -.-> AStar
+    Agent -.-> BT
+```
+
+### 🧠 Agent Architectures
+
+#### 1. Finite State Machine (FSM)
+The FSM agent transitions between discrete states based on energy levels.
+- **Exploring**: Moves randomly to find the goal.
+- **Resting**: Regenerates energy when low.
+- **FoundGoal**: Stops upon reaching the target.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Exploring
+    Exploring --> Resting: Energy < 10
+    Resting --> Exploring: Energy >= 100
+    Exploring --> FoundGoal: At Goal
+```
+
+#### 2. A* Pathfinding
+The A* agent plans a complete path to the goal at the start.
+- **Heuristic**: Manhattan Distance.
+- **Re-planning**: Occurs only if the path is blocked (dynamic obstacles).
+- **Metric**: Optimality of path length.
+
+#### 3. Behavior Tree (BT)
+The BT agent uses a hierarchical tree of nodes to make decisions every tick.
+- **Sequence**: `Result = AND(Child1, Child2, ...)`
+- **Selector**: `Result = OR(Child1, Child2, ...)`
+- **Condition**: Checks state (e.g., `IsHungry?`).
+- **Action**: Performs task (e.g., `MoveTowardsGoal`).
+
+```mermaid
+graph TD
+    Root[Selector] --> Sequence
+    Root --> Wander[Action: Wander]
+    
+    Sequence --> IsHungry[Condition: Is Hungry?]
+    Sequence --> MoveToGoal[Action: Move Towards Goal]
+```
+
+---
+
+## 🚀 Getting Started
 
 ### Prerequisites
 - **Rust**: Latest stable version (Install via [rustup.rs](https://rustup.rs/))
@@ -35,40 +106,40 @@ cd cognitive-grid-lab
 cargo build --release
 ```
 
-### Running the Simulation
-To run the default simulation (currently showcasing the FSM agent):
+### Running Simulations
+You can run individual agent demos to watch them in the terminal:
+
 ```bash
-cargo run --release
+cargo run --bin stage2_fsm           # Watch FSM Agent
+cargo run --bin stage3_astar         # Watch A* Agent
+cargo run --bin stage4_behavior_tree # Watch Behavior Tree Agent
 ```
 
-## 🏗️ Architecture
-
-The project follows a clean separation of concerns:
-
-| Module | Description |
-|--------|-------------|
-| `src/engine` | Core simulation loop, grid physics, and world state. |
-| `src/agents` | Implementations of FSM, A*, and Behavior Tree agents. |
-| `src/algorithms` | Generic algorithms like A* search, BFS, etc. |
-| `src/logging` | Metrics collection and structured data export. |
-| `src/experiments` | Batch runner for conducting multiple trials. |
+---
 
 ## 🧪 Experiments
 
-Cognitive Grid includes a batch runner to compare agents:
+Cognitive Grid includes a powerful batch runner to compare agents statistically.
+
+### Running a Batch
+Execute the experiment runner to perform 50 episodes for each agent type:
 
 ```bash
 cargo run --bin run_experiments
 ```
 
-This will run 50 episodes for each agent type (FSM, A*, Behavior Tree) and save the results to `experiments/data/`.
-
 ### Analyzing Results
-The output data is in CSV format, containing:
-- `agent_type`: The architecture used.
-- `steps`: Steps taken to reach the goal.
-- `energy_remaining`: Remaining energy (for FSM/BT).
-- `success`: Whether the goal was reached.
+Results are saved to `experiments/data/<timestamp>_results.csv`.
+
+**CSV Columns:**
+| Column | Description |
+|--------|-------------|
+| `agent_type` | FSM, AStar, or BehaviorTree |
+| `steps` | Total discrete steps taken to reach the goal |
+| `energy_remaining` | Energy left at the end of the episode |
+| `success` | `true` if goal reached, `false` if max steps exceeded |
+
+---
 
 ## 🗺️ Roadmap
 
@@ -77,6 +148,7 @@ The output data is in CSV format, containing:
 - [x] **Stage 3**: A* Pathfinding Agent
 - [x] **Stage 4**: Behavior Tree Agent
 - [x] **Stage 5**: Structured Logging & Experiment Runner
+- [x] **Stage 6**: Documentation & Polish
 
 ## 📄 License
 
