@@ -1,2 +1,4 @@
-// Stage 1: no engine modules are needed yet.
-// Keep this file minimal so the project compiles cleanly.
+pub mod world;
+
+// Other engine modules (grid, state, game loop) will be introduced
+// in later stages as needed.
