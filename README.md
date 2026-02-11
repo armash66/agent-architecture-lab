@@ -32,28 +32,26 @@ The framework is designed to answer:
 
 The system is built on a strict separation of concerns between the **Engine** (physics/rules) and the **Agents** (decision logic).
 
-```text
-+--------------------------+
-| User / Experiment Runner |
-+--------------------------+
-            |
-            | Initializes
-            v
-      +-----------+           +----------+
-      |   World   |---Owns--->|   Grid   |
-      +-----------+           +----------+
-            |
-            | Owns Box<dyn Agent>
-            v
-     +--------------+
-     |    Agent     |
-     +--------------+
-            ^
-            : Implemented By
-            :
-+-----------+-----------+---------------+
-|    FSM    |   AStar   | Behavior Tree |
-+-----------+-----------+---------------+
+```mermaid
+graph TD
+    User[User / Experiment Runner] -->|Initializes| World
+    World -->|Owns| Grid
+    World -->|Owns| Agent["Box<dyn Agent>"]
+    
+    subgraph Engine
+        Grid[Grid Map]
+        State[World State]
+    end
+    
+    subgraph Agents
+        FSM[FSM Agent]
+        AStar[A* Agent]
+        BT[Behavior Tree Agent]
+    end
+    
+    Agent -.-> FSM
+    Agent -.-> AStar
+    Agent -.-> BT
 ```
 
 ### 🧠 Agent Architectures
@@ -64,15 +62,12 @@ The FSM agent transitions between discrete states based on energy levels.
 - **Resting**: Regenerates energy when low.
 - **FoundGoal**: Stops upon reaching the target.
 
-```text
-       [Start]
-          |
-          v
-+---> Exploring ----(Energy < 10)----> Resting
-|         |                               |
-|         | (At Goal)                     | (Energy >= 100)
-|         v                               |
-+---- FoundGoal <-------------------------+
+```mermaid
+stateDiagram-v2
+    [*] --> Exploring
+    Exploring --> Resting: Energy < 10
+    Resting --> Exploring: Energy >= 100
+    Exploring --> FoundGoal: At Goal
 ```
 
 #### 2. A* Pathfinding
@@ -88,13 +83,13 @@ The BT agent uses a hierarchical tree of nodes to make decisions every tick.
 - **Condition**: Checks state (e.g., `IsHungry?`).
 - **Action**: Performs task (e.g., `MoveTowardsGoal`).
 
-```text
-         [Selector] (Root)
-         /        \
-   [Sequence]    [Action: Wander]
-    /     \
-[Cond:    [Action:
- IsHungry?] MoveToGoal]
+```mermaid
+graph TD
+    Root[Selector] --> Sequence
+    Root --> Wander[Action: Wander]
+    
+    Sequence --> IsHungry[Condition: Is Hungry?]
+    Sequence --> MoveToGoal[Action: Move Towards Goal]
 ```
 
 ---
