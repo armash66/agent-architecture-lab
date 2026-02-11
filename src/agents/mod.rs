@@ -1,4 +1,6 @@
 pub mod fsm;
 pub mod astar;
 
-// Future agents (behavior trees, etc.) will be added in later stages.
+pub mod behavior_tree;
+
+// Future agents (e.g. more advanced planners) can be added in later stages.
