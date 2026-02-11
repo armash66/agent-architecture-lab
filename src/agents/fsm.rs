@@ -165,3 +165,25 @@ impl FSMAgent {
     }
 }
 
+impl super::Agent for FSMAgent {
+    fn update(&mut self, grid: &Grid) {
+        self.update(grid);
+    }
+
+    fn position(&self) -> Position {
+        self.pos
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn energy(&self) -> Option<u32> {
+        Some(self.energy)
+    }
+
+    fn debug_state(&self) -> String {
+        format!("{:?}", self.state)
+    }
+}
+

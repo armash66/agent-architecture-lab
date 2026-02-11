@@ -1,4 +1,4 @@
-use crate::agents::astar::AStarAgent;
+use crate::agents::Agent;
 
 /// A position on the grid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -15,10 +15,10 @@ pub struct Grid {
     tiles: Vec<Vec<bool>>,
 }
 
-/// The world contains the grid and the A* agent.
+/// The world contains the grid and a polymorphic agent.
 pub struct World {
     pub grid: Grid,
-    pub agent: AStarAgent,
+    pub agent: Box<dyn Agent>,
     pub step: usize,
 }
 
@@ -63,17 +63,14 @@ impl Grid {
 }
 
 impl World {
-    /// Create a new world with the agent starting at (0, 0)
-    /// and the goal at the bottom-right corner.
-    pub fn new(width: usize, height: usize) -> Self {
-        let start_pos = Position { x: 0, y: 0 };
+    /// Create a new world with the given agent.
+    pub fn new(width: usize, height: usize, agent: Box<dyn Agent>) -> Self {
         let goal = Position {
             x: width.saturating_sub(1),
             y: height.saturating_sub(1),
         };
 
         let grid = Grid::new(width, height, goal);
-        let agent = AStarAgent::new(start_pos.x, start_pos.y);
 
         Self {
             grid,
@@ -88,7 +85,12 @@ impl World {
         pos == self.grid.goal
     }
 
-    /// Advance the world by one tick: update the A* agent.
+    /// Whether the agent is stuck (mostly for A*).
+    pub fn is_agent_stuck(&self) -> bool {
+        self.agent.is_stuck()
+    }
+
+    /// Advance the world by one tick: update the agent.
     pub fn update(&mut self) {
         self.agent.update(&self.grid);
         self.step += 1;
@@ -97,7 +99,7 @@ impl World {
     /// Print a simple ASCII representation of the grid,
     /// showing the agent and the goal.
     pub fn print(&self) {
-        println!("Step {} | A* agent", self.step);
+        println!("Step {} | Agent at {:?}", self.step, self.agent.position());
 
         for y in 0..self.grid.height {
             for x in 0..self.grid.width {
@@ -108,7 +110,11 @@ impl World {
                 } else if pos == self.grid.goal {
                     print!("G ");
                 } else {
-                    print!(". ");
+                    if self.grid.is_walkable(x, y) {
+                        print!(". ");
+                    } else {
+                        print!("# ");
+                    }
                 }
             }
             println!();
@@ -117,4 +123,5 @@ impl World {
         println!();
     }
 }
+
 

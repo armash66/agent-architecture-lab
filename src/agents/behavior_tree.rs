@@ -123,6 +123,28 @@ impl BehaviorTreeAgent {
     }
 }
 
+impl super::Agent for BehaviorTreeAgent {
+    fn update(&mut self, grid: &Grid) {
+        self.update(grid);
+    }
+
+    fn position(&self) -> Position {
+        self.pos
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn energy(&self) -> Option<u32> {
+        Some(self.energy)
+    }
+
+    fn debug_state(&self) -> String {
+        "Running".to_string() // BT doesn't have a single state enum like FSM
+    }
+}
+
 // === Conditions and Actions used in the default tree ===
 
 fn is_hungry(agent: &BehaviorTreeAgent, _grid: &Grid) -> bool {

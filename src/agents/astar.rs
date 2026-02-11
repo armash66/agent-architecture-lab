@@ -6,6 +6,9 @@ pub struct AStarAgent {
     pos: Position,
     path: Vec<(usize, usize)>,
     path_index: usize,
+    /// Set to true if we determined there is no path to the goal
+    /// under the current grid configuration.
+    stuck: bool,
 }
 
 impl AStarAgent {
@@ -17,6 +20,7 @@ impl AStarAgent {
             },
             path: Vec::new(),
             path_index: 0,
+            stuck: false,
         }
     }
 
@@ -24,9 +28,20 @@ impl AStarAgent {
         self.pos
     }
 
+    /// Whether the agent has determined that no path exists and stopped trying.
+    pub fn is_stuck(&self) -> bool {
+        self.stuck
+    }
+
     /// Update the agent: if we don't have a path, compute one.
     /// Then advance one step along the path toward the goal.
     pub fn update(&mut self, grid: &Grid) {
+        // ... (existing update logic) ...
+        // If we already know there's no path, do nothing.
+        if self.stuck {
+            return;
+        }
+
         // Already at goal.
         if self.pos == grid.goal {
             return;
@@ -52,6 +67,8 @@ impl AStarAgent {
                 }
                 None => {
                     println!("A*: No path found from {:?} to {:?}", start, goal);
+                    // Mark as stuck so we don't keep re-planning every tick.
+                    self.stuck = true;
                     return;
                 }
             }
@@ -63,6 +80,32 @@ impl AStarAgent {
             let (nx, ny) = self.path[self.path_index];
             self.pos = Position { x: nx, y: ny };
             println!("A*: Moving to ({}, {})", nx, ny);
+        }
+    }
+}
+
+impl super::Agent for AStarAgent {
+    fn update(&mut self, grid: &Grid) {
+        self.update(grid);
+    }
+
+    fn position(&self) -> Position {
+        self.pos
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn is_stuck(&self) -> bool {
+        self.stuck
+    }
+
+    fn debug_state(&self) -> String {
+        if self.stuck {
+            "Stuck".to_string()
+        } else {
+            format!("Path len: {}", self.path.len())
         }
     }
 }
