@@ -1,4 +1,4 @@
-use crate::agents::fsm::{FSMAgent, FSMState};
+use crate::agents::astar::AStarAgent;
 
 /// A position on the grid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -12,22 +12,53 @@ pub struct Grid {
     pub width: usize,
     pub height: usize,
     pub goal: Position,
+    tiles: Vec<Vec<bool>>,
 }
 
 /// The world contains the grid and the FSM agent.
 pub struct World {
     pub grid: Grid,
-    pub agent: FSMAgent,
+    pub agent: AStarAgent,
     pub step: usize,
 }
 
 impl Grid {
     pub fn new(width: usize, height: usize, goal: Position) -> Self {
+        let tiles = vec![vec![true; width]; height];
+
         Self {
             width,
             height,
             goal,
+            tiles,
         }
+    }
+
+    /// Convenience constructor for tests or experiments that need obstacles.
+    /// `obstacles` is a list of (x, y) cells that are *not* walkable.
+    pub fn with_obstacles(
+        width: usize,
+        height: usize,
+        goal: Position,
+        obstacles: &[(usize, usize)],
+    ) -> Self {
+        let mut grid = Self::new(width, height, goal);
+
+        for &(x, y) in obstacles {
+            if x < width && y < height && (x != goal.x || y != goal.y) {
+                grid.tiles[y][x] = false;
+            }
+        }
+
+        grid
+    }
+
+    /// Return whether the given cell is walkable (in-bounds and not blocked).
+    pub fn is_walkable(&self, x: usize, y: usize) -> bool {
+        if x >= self.width || y >= self.height {
+            return false;
+        }
+        self.tiles[y][x]
     }
 }
 
@@ -42,7 +73,7 @@ impl World {
         };
 
         let grid = Grid::new(width, height, goal);
-        let agent = FSMAgent::new(start_pos.x, start_pos.y);
+        let agent = AStarAgent::new(start_pos.x, start_pos.y);
 
         Self {
             grid,
@@ -51,12 +82,13 @@ impl World {
         }
     }
 
-    /// Has the agent reached the goal cell according to its FSM state?
+    /// Has the agent reached the goal cell?
     pub fn has_reached_goal(&self) -> bool {
-        self.agent.state() == FSMState::FoundGoal
+        let pos = self.agent.position();
+        pos == self.grid.goal
     }
 
-    /// Advance the world by one tick: update the FSM agent.
+    /// Advance the world by one tick: update the A* agent.
     pub fn update(&mut self) {
         self.agent.update(&self.grid);
         self.step += 1;
@@ -65,12 +97,7 @@ impl World {
     /// Print a simple ASCII representation of the grid,
     /// showing the agent and the goal.
     pub fn print(&self) {
-        println!(
-            "Step {} | state: {:?} | energy: {}",
-            self.step,
-            self.agent.state(),
-            self.agent.energy()
-        );
+        println!("Step {} | A* agent", self.step);
 
         for y in 0..self.grid.height {
             for x in 0..self.grid.width {

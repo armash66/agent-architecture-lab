@@ -2,14 +2,11 @@ use std::{thread, time::Duration};
 
 mod agents;
 mod engine;
+mod algorithms;
 
 use engine::world::World;
 
 fn main() {
-    // Stage 2:
-    // - World + Grid moved into engine::world
-    // - Agent is now an FSM-based FSMAgent
-    // - Game loop calls World::update(), which updates the FSM
     let mut world = World::new(10, 5);
 
     loop {
