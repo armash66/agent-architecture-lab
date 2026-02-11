@@ -15,7 +15,7 @@ pub struct Grid {
     tiles: Vec<Vec<bool>>,
 }
 
-/// The world contains the grid and the FSM agent.
+/// The world contains the grid and the A* agent.
 pub struct World {
     pub grid: Grid,
     pub agent: AStarAgent,
