@@ -174,6 +174,10 @@ impl super::Agent for FSMAgent {
         self.pos
     }
 
+    fn name(&self) -> &'static str {
+        "FSM"
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

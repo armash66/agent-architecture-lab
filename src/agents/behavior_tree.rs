@@ -132,6 +132,10 @@ impl super::Agent for BehaviorTreeAgent {
         self.pos
     }
 
+    fn name(&self) -> &'static str {
+        "BehaviorTree"
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

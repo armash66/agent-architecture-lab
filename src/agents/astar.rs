@@ -93,6 +93,10 @@ impl super::Agent for AStarAgent {
         self.pos
     }
 
+    fn name(&self) -> &'static str {
+        "AStar"
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
