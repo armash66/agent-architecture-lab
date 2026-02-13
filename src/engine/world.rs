@@ -1,11 +1,6 @@
 use crate::agents::Agent;
 
-/// A position on the grid.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Position {
-    pub x: usize,
-    pub y: usize,
-}
+pub use super::position::Position;
 
 /// A simple 2D grid with a single goal cell.
 pub struct Grid {
