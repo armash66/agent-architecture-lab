@@ -1,9 +1,10 @@
 # Cognitive Grid 🧠
 
-**A modular, high-performance 2D grid simulation framework for comparing agent architectures.**
+**A modular, high-performance 2D grid simulation framework for comparing agent architectures under cognitive constraints.**
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Rust](https://img.shields.io/badge/built_with-Rust-orange.svg)
+![Bevy](https://img.shields.io/badge/3D_viewer-Bevy_0.15-5B8FB9.svg)
 
 ---
 
@@ -11,26 +12,24 @@
 
 **Cognitive Grid** is a research lab for experimenting with structured decision-making in controlled environments. It provides a standardized grid-world engine where different agent architectures—from simple State Machines to complex Behavior Trees—can be implemented, benchmarked, and analyzed under identical conditions.
 
-The framework is designed to answer:
-- *How does Agent A compare to Agent B in terms of energy efficiency?*
-- *What is the computational cost of planning (A*) vs. reacting (FSM)?*
-- *How do Behavior Trees handle dynamic objectives compared to state machines?*
+The framework goes beyond simple pathfinding by adding **cognitive limitations** that simulate bounded rationality, making agent behavior more realistic:
+- **Decision Noise** — agents randomly deviate from optimal actions
+- **Bounded Planning** — A* search caps node expansions, yielding partial paths
+- **Spatial Memory** — agents track visited cells with finite ring-buffer memory
+- **Exploration Decay** — noise probability decays over time as agents "learn"
 
 ## ✨ Key Features
 
-- **⚡ Lightweight Engine**: Custom 2D grid world with obstacles, goals, and hazards.
-- **🤖 Modular Agents**:
-  - **Finite State Machines (FSM)**: Deterministic, state-based logic.
-  - **A* Pathfinding**: Optimal path planning with Manhattan heuristics.
-  - **Behavior Trees (BT)**: Hierarchical, modular decision-making.
-- **📊 Metric Logging**: Automated CSV export of steps, energy, and success rates.
-- **🧪 Experiment Runner**: Headless batch execution for statistical analysis.
+- **⚡ Lightweight Engine**: Custom 2D grid world with obstacles and goals.
+- **🤖 Three Agent Architectures**: FSM, A* Pathfinding, and Behavior Trees.
+- **🧠 Cognitive Layer**: Noise, bounded planning, spatial memory, exploration decay.
+- **📊 Structured Logging**: CSV export of steps, energy, and all cognitive parameters.
+- **🧪 Experiment Sweeps**: Batch runner sweeping noise, planning limits, memory, and decay.
+- **🎮 3D Visualization**: Real-time Bevy viewer with color-coded agents and trail dots.
 
 ---
 
 ## 🏗️ Architecture
-
-The system is built on a strict separation of concerns between the **Engine** (physics/rules) and the **Agents** (decision logic).
 
 ```mermaid
 graph TD
@@ -49,18 +48,28 @@ graph TD
         BT[Behavior Tree Agent]
     end
     
+    subgraph Cognitive Layer
+        Noise[Decision Noise]
+        Memory[Spatial Memory]
+        Bounded[Bounded Planning]
+        Decay[Exploration Decay]
+    end
+    
     Agent -.-> FSM
     Agent -.-> AStar
     Agent -.-> BT
+    FSM --- Noise
+    FSM --- Memory
+    AStar --- Bounded
+    AStar --- Noise
+    BT --- Noise
+    BT --- Decay
 ```
 
 ### 🧠 Agent Architectures
 
 #### 1. Finite State Machine (FSM)
-The FSM agent transitions between discrete states based on energy levels.
-- **Exploring**: Moves randomly to find the goal.
-- **Resting**: Regenerates energy when low.
-- **FoundGoal**: Stops upon reaching the target.
+Transitions between discrete states based on energy levels.
 
 ```mermaid
 stateDiagram-v2
@@ -71,26 +80,29 @@ stateDiagram-v2
 ```
 
 #### 2. A* Pathfinding
-The A* agent plans a complete path to the goal at the start.
-- **Heuristic**: Manhattan Distance.
-- **Re-planning**: Occurs only if the path is blocked (dynamic obstacles).
-- **Metric**: Optimality of path length.
+Plans a path to the goal using Manhattan distance heuristic.
+- **Bounded rationality**: `planning_limit` caps node expansions, producing partial paths.
+- **Re-planning**: Triggers when path is exhausted or noise invalidates it.
 
 #### 3. Behavior Tree (BT)
-The BT agent uses a hierarchical tree of nodes to make decisions every tick.
-- **Sequence**: `Result = AND(Child1, Child2, ...)`
-- **Selector**: `Result = OR(Child1, Child2, ...)`
-- **Condition**: Checks state (e.g., `IsHungry?`).
-- **Action**: Performs task (e.g., `MoveTowardsGoal`).
+Hierarchical tree of Selector/Sequence/Action/Condition nodes.
 
 ```mermaid
 graph TD
     Root[Selector] --> Sequence
     Root --> Wander[Action: Wander]
-    
     Sequence --> IsHungry[Condition: Is Hungry?]
     Sequence --> MoveToGoal[Action: Move Towards Goal]
 ```
+
+### 🧩 Cognitive Parameters
+
+| Parameter | Field | Affects | Description |
+|-----------|-------|---------|-------------|
+| Decision Noise | `noise: f32` | All agents | Probability of taking a random move |
+| Bounded Planning | `planning_limit: Option<usize>` | A* only | Max node expansions per search |
+| Spatial Memory | `memory_capacity: usize` | All agents | Ring-buffer of visited cells (FIFO eviction) |
+| Exploration Decay | `decay_rate: f32` | All agents | Per-tick multiplier on effective noise |
 
 ---
 
@@ -107,49 +119,77 @@ cargo build --release
 ```
 
 ### Running Simulations
-You can run individual agent demos to watch them in the terminal:
 
 ```bash
-cargo run --bin demo_fsm           # Watch FSM Agent
-cargo run --bin demo_astar         # Watch A* Agent
-cargo run --bin demo_behavior_tree # Watch Behavior Tree Agent
+# Terminal demos
+cargo run --bin demo_fsm           # FSM Agent
+cargo run --bin demo_astar         # A* Agent
+cargo run --bin demo_behavior_tree # Behavior Tree Agent
+
+# Headless runner (all agents, no delay)
+cargo run --bin headless
+
+# 3D Viewer (Bevy)
+cargo run --bin viewer
 ```
+
+### 🎮 3D Viewer
+
+The Bevy viewer shows all three agents navigating the grid simultaneously:
+
+| Element | Visual |
+|---------|--------|
+| 🟢 FSM | Green cube |
+| 🔵 A* | Blue cube |
+| 🟠 BT | Orange cube |
+| 🟡 Goal | Golden rotating cylinder |
+| Trail | Translucent breadcrumb spheres |
+
+Agents disappear when they reach the goal. Console prints a summary with tick counts.
 
 ---
 
 ## 🧪 Experiments
 
-Cognitive Grid includes a powerful batch runner to compare agents statistically.
-
-### Running a Batch
-Execute the experiment runner to perform 50 episodes for each agent type:
-
+### Running Parameter Sweeps
 ```bash
 cargo run --bin run_experiments
 ```
 
-### Analyzing Results
-Results are saved to `experiments/data/<timestamp>_results.csv`.
+Runs 4 sweeps across all agent types (100 episodes each):
 
-**CSV Columns:**
+| Sweep | Values |
+|-------|--------|
+| Noise | 0.0, 0.1, 0.3, 0.5 |
+| Planning Limit (A*) | None, 50, 20, 5 |
+| Memory Capacity | 0, 5, 20, 100 |
+| Decay Rate | 1.0, 0.99, 0.95 (noise=0.5) |
+
+### CSV Output
+Results saved to `experiments/data/<timestamp>_results.csv`.
+
 | Column | Description |
 |--------|-------------|
 | `agent_type` | FSM, AStar, or BehaviorTree |
-| `steps` | Total discrete steps taken to reach the goal |
-| `energy_remaining` | Energy left at the end of the episode |
-| `success` | `true` if goal reached, `false` if max steps exceeded |
+| `steps` | Steps taken to reach goal |
+| `success` | Whether goal was reached |
+| `energy_remaining` | Energy at end of episode |
+| `noise` | Noise probability used |
+| `planning_limit` | A* expansion cap (0 = unlimited) |
+| `memory_capacity` | Memory ring-buffer size |
+| `decay_rate` | Per-tick exploration decay |
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome! Whether it's adding a new agent architecture (e.g., Reinforcement Learning), improving the heuristic function, or visualizing the simulation, feel free to open a PR.
+Contributions welcome! Ideas:
+- New agent architectures (RL, MCTS)
+- Dynamic obstacles / multi-agent scenarios
+- Web-based visualization
+- Statistical analysis tooling
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-agent`)
-3. Commit your changes (`git commit -m 'Add AmazingAgent'`)
-4. Push to the branch (`git push origin feature/amazing-agent`)
-5. Open a Pull Request
+1. Fork → branch → commit → PR.
 
 ## 📄 License
 
