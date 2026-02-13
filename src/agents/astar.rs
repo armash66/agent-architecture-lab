@@ -9,6 +9,8 @@ pub struct AStarAgent {
     /// Set to true if we determined there is no path to the goal
     /// under the current grid configuration.
     stuck: bool,
+    /// Max node expansions for bounded A*. `None` = unlimited.
+    planning_limit: Option<usize>,
 }
 
 impl AStarAgent {
@@ -21,6 +23,15 @@ impl AStarAgent {
             path: Vec::new(),
             path_index: 0,
             stuck: false,
+            planning_limit: None,
+        }
+    }
+
+    /// Create an A* agent with a bounded planning limit.
+    pub fn with_planning_limit(start_x: usize, start_y: usize, limit: usize) -> Self {
+        Self {
+            planning_limit: Some(limit),
+            ..Self::new(start_x, start_y)
         }
     }
 
@@ -52,7 +63,7 @@ impl AStarAgent {
             let start = (self.pos.x, self.pos.y);
             let goal = (grid.goal.x, grid.goal.y);
 
-            match find_path(start, goal, grid) {
+            match find_path(start, goal, grid, self.planning_limit) {
                 Some(path) => {
                     let path: Vec<(usize, usize)> = path;
                     let path_len: usize = path.len();

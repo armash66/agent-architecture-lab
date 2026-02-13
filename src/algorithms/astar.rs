@@ -40,14 +40,19 @@ fn manhattan(a: (usize, usize), b: (usize, usize)) -> u32 {
     (dx + dy) as u32
 }
 
-/// Standard A* pathfinding on the provided grid.
+/// A* pathfinding on the provided grid.
 ///
 /// Returns a path of (x, y) coordinates from `start` to `goal`,
 /// including both endpoints, or `None` if no path exists.
+///
+/// If `max_expansions` is `Some(n)`, the search stops after expanding
+/// `n` nodes and returns the best partial path found so far (the path
+/// to the node closest to the goal). This models bounded rationality.
 pub fn find_path(
     start: (usize, usize),
     goal: (usize, usize),
     grid: &Grid,
+    max_expansions: Option<usize>,
 ) -> Option<Vec<(usize, usize)>> {
     if !grid.is_walkable(start.0, start.1) || !grid.is_walkable(goal.0, goal.1) {
         return None;
@@ -57,6 +62,12 @@ pub fn find_path(
     let mut came_from: HashMap<(usize, usize), (usize, usize)> = HashMap::new();
     let mut g_score: HashMap<(usize, usize), u32> = HashMap::new();
     let mut closed: HashSet<(usize, usize)> = HashSet::new();
+
+    // Track the best (closest-to-goal) node seen so far for partial paths.
+    let mut best_pos = start;
+    let mut best_h = manhattan(start, goal);
+
+    let mut expansions: usize = 0;
 
     g_score.insert(start, 0);
 
@@ -70,22 +81,29 @@ pub fn find_path(
         let current_pos = current.position;
 
         if current_pos == goal {
-            // Reconstruct path.
-            let mut path = Vec::new();
-            let mut p = current_pos;
-            path.push(p);
-            while let Some(prev) = came_from.get(&p) {
-                p = *prev;
-                path.push(p);
-            }
-            path.reverse();
-            return Some(path);
+            return Some(reconstruct_path(&came_from, current_pos));
         }
 
         if closed.contains(&current_pos) {
             continue;
         }
         closed.insert(current_pos);
+        expansions += 1;
+
+        // Update best node tracking.
+        let h = manhattan(current_pos, goal);
+        if h < best_h {
+            best_h = h;
+            best_pos = current_pos;
+        }
+
+        // Bounded rationality: stop after max_expansions.
+        if let Some(limit) = max_expansions {
+            if expansions >= limit {
+                // Return partial path to the closest node found.
+                return Some(reconstruct_path(&came_from, best_pos));
+            }
+        }
 
         let current_g = *g_score.get(&current_pos).unwrap_or(&u32::MAX);
 
@@ -131,6 +149,22 @@ pub fn find_path(
     None
 }
 
+/// Reconstruct a path from `came_from` map, ending at `end`.
+fn reconstruct_path(
+    came_from: &HashMap<(usize, usize), (usize, usize)>,
+    end: (usize, usize),
+) -> Vec<(usize, usize)> {
+    let mut path = Vec::new();
+    let mut p = end;
+    path.push(p);
+    while let Some(prev) = came_from.get(&p) {
+        p = *prev;
+        path.push(p);
+    }
+    path.reverse();
+    path
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,7 +176,7 @@ mod tests {
         let grid = Grid::new(5, 1, goal);
         let start = (0, 0);
 
-        let path = find_path(start, (4, 0), &grid).expect("path should exist");
+        let path = find_path(start, (4, 0), &grid, None).expect("path should exist");
         assert_eq!(path.first().copied(), Some(start));
         assert_eq!(path.last().copied(), Some((4, 0)));
         assert_eq!(path.len(), 5);
@@ -161,7 +195,7 @@ mod tests {
         let grid = Grid::with_obstacles(5, 5, goal, &obstacles);
 
         let start = (0, 0);
-        let path = find_path(start, (4, 4), &grid).expect("path should exist");
+        let path = find_path(start, (4, 4), &grid, None).expect("path should exist");
         assert_eq!(path.first().copied(), Some(start));
         assert_eq!(path.last().copied(), Some((4, 4)));
     }
@@ -174,7 +208,23 @@ mod tests {
         let grid = Grid::with_obstacles(3, 3, goal, &obstacles);
 
         let start = (0, 0);
-        let path = find_path(start, (2, 2), &grid);
+        let path = find_path(start, (2, 2), &grid, None);
         assert!(path.is_none());
     }
+
+    #[test]
+    fn bounded_search_returns_partial_path() {
+        // 10x1 grid — optimal path is 10 cells long (start..=goal).
+        // With max_expansions = 3, agent can't see all the way.
+        let goal = Position { x: 9, y: 0 };
+        let grid = Grid::new(10, 1, goal);
+        let start = (0, 0);
+
+        let path = find_path(start, (9, 0), &grid, Some(3)).expect("partial path should exist");
+        assert_eq!(path.first().copied(), Some(start));
+        // Should NOT reach the goal — path is partial.
+        assert!(path.len() < 10, "bounded search should not find full path");
+        assert!(path.len() > 1, "should make some progress");
+    }
 }
+
