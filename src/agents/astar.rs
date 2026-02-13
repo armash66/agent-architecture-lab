@@ -1,6 +1,7 @@
 use rand::Rng;
 use crate::algorithms::astar::find_path;
 use crate::engine::world::{Grid, Position};
+use super::memory::SpatialMemory;
 
 /// Agent that uses A* pathfinding to move toward the goal.
 pub struct AStarAgent {
@@ -14,6 +15,8 @@ pub struct AStarAgent {
     planning_limit: Option<usize>,
     /// Probability (0.0–1.0) of taking a random action instead of following the path.
     noise: f32,
+    /// Visited-cell memory with bounded capacity.
+    memory: SpatialMemory,
 }
 
 impl AStarAgent {
@@ -28,6 +31,7 @@ impl AStarAgent {
             stuck: false,
             planning_limit: None,
             noise: 0.0,
+            memory: SpatialMemory::new(0),
         }
     }
 
@@ -39,11 +43,18 @@ impl AStarAgent {
         }
     }
 
-    /// Create an A* agent with cognitive parameters.
-    pub fn with_config(start_x: usize, start_y: usize, planning_limit: Option<usize>, noise: f32) -> Self {
+    /// Create an A* agent with full cognitive parameters.
+    pub fn with_config(
+        start_x: usize,
+        start_y: usize,
+        planning_limit: Option<usize>,
+        noise: f32,
+        memory_capacity: usize,
+    ) -> Self {
         Self {
             planning_limit,
             noise,
+            memory: SpatialMemory::new(memory_capacity),
             ..Self::new(start_x, start_y)
         }
     }
@@ -60,6 +71,8 @@ impl AStarAgent {
     /// Update the agent: if we don't have a path, compute one.
     /// Then advance one step along the path toward the goal.
     pub fn update(&mut self, grid: &Grid) {
+        // Record current position in memory.
+        self.memory.record(self.pos);
         // ... (existing update logic) ...
         // If we already know there's no path, do nothing.
         if self.stuck {

@@ -1,6 +1,8 @@
 use rand::Rng;
+use rand::seq::SliceRandom;
 
 use crate::engine::world::{Grid, Position};
+use super::memory::SpatialMemory;
 
 /// FSM states for the agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,13 +20,15 @@ pub enum Action {
     None,
 }
 
-/// FSM-based agent with optional decision noise.
+/// FSM-based agent with optional cognitive limitations.
 pub struct FSMAgent {
     pos: Position,
     state: FSMState,
     energy: u32,
     /// Probability (0.0–1.0) of taking a random action instead of the planned one.
     noise: f32,
+    /// Visited-cell memory with bounded capacity.
+    memory: SpatialMemory,
 }
 
 impl FSMAgent {
@@ -38,6 +42,7 @@ impl FSMAgent {
             state: FSMState::Exploring,
             energy: 100,
             noise: 0.0,
+            memory: SpatialMemory::new(0),
         }
     }
 
@@ -45,6 +50,15 @@ impl FSMAgent {
     pub fn with_noise(start_x: usize, start_y: usize, noise: f32) -> Self {
         Self {
             noise,
+            ..Self::new(start_x, start_y)
+        }
+    }
+
+    /// Create an FSM agent with full cognitive config.
+    pub fn with_config(start_x: usize, start_y: usize, noise: f32, memory_capacity: usize) -> Self {
+        Self {
+            noise,
+            memory: SpatialMemory::new(memory_capacity),
             ..Self::new(start_x, start_y)
         }
     }
@@ -90,6 +104,8 @@ impl FSMAgent {
     /// Update the FSM: handle transitions, perform actions,
     /// and print state changes.
     pub fn update(&mut self, grid: &Grid) {
+        // Record current position in memory.
+        self.memory.record(self.pos);
         // Check for goal condition first.
         if self.pos == grid.goal && self.state != FSMState::FoundGoal {
             self.state = FSMState::FoundGoal;
@@ -164,28 +180,31 @@ impl FSMAgent {
     fn move_randomly(&mut self, grid: &Grid) {
         let mut rng = rand::thread_rng();
 
-        // Try random directions until we find a valid in-bounds move.
-        loop {
-            let dir = rng.gen_range(0..4);
-            let mut new_pos = self.pos;
+        // Collect all valid neighbors.
+        let mut candidates = Vec::new();
+        if self.pos.x > 0 && grid.is_walkable(self.pos.x - 1, self.pos.y) {
+            candidates.push(Position { x: self.pos.x - 1, y: self.pos.y });
+        }
+        if self.pos.x + 1 < grid.width && grid.is_walkable(self.pos.x + 1, self.pos.y) {
+            candidates.push(Position { x: self.pos.x + 1, y: self.pos.y });
+        }
+        if self.pos.y > 0 && grid.is_walkable(self.pos.x, self.pos.y - 1) {
+            candidates.push(Position { x: self.pos.x, y: self.pos.y - 1 });
+        }
+        if self.pos.y + 1 < grid.height && grid.is_walkable(self.pos.x, self.pos.y + 1) {
+            candidates.push(Position { x: self.pos.x, y: self.pos.y + 1 });
+        }
 
-            match dir {
-                // left
-                0 if new_pos.x > 0 => new_pos.x -= 1,
-                // right
-                1 if new_pos.x + 1 < grid.width => new_pos.x += 1,
-                // up
-                2 if new_pos.y > 0 => new_pos.y -= 1,
-                // down
-                3 if new_pos.y + 1 < grid.height => new_pos.y += 1,
-                _ => {
-                    // invalid move (would go out of bounds), try again
-                    continue;
-                }
-            }
+        if candidates.is_empty() {
+            return;
+        }
 
-            self.pos = new_pos;
-            break;
+        // Prefer unvisited cells if memory is active.
+        let unvisited: Vec<_> = candidates.iter().filter(|p| !self.memory.contains(p)).copied().collect();
+        let pool = if unvisited.is_empty() { &candidates } else { &unvisited };
+
+        if let Some(&next) = pool.choose(&mut rng) {
+            self.pos = next;
         }
     }
 }

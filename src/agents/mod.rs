@@ -13,4 +13,5 @@ pub trait Agent {
 pub mod fsm;
 pub mod astar;
 pub mod behavior_tree;
+pub mod memory;
 

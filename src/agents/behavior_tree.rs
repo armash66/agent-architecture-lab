@@ -1,6 +1,7 @@
 use rand::Rng;
 
 use crate::engine::world::{Grid, Position};
+use super::memory::SpatialMemory;
 
 /// Status returned by behavior tree nodes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +80,8 @@ pub struct BehaviorTreeAgent {
     root: Node,
     /// Probability (0.0–1.0) of taking a random action instead of following BT.
     noise: f32,
+    /// Visited-cell memory with bounded capacity.
+    memory: SpatialMemory,
 }
 
 impl BehaviorTreeAgent {
@@ -100,6 +103,7 @@ impl BehaviorTreeAgent {
             energy: 100,
             root,
             noise: 0.0,
+            memory: SpatialMemory::new(0),
         }
     }
 
@@ -107,6 +111,15 @@ impl BehaviorTreeAgent {
     pub fn with_noise(start_x: usize, start_y: usize, noise: f32) -> Self {
         Self {
             noise,
+            ..Self::new(start_x, start_y)
+        }
+    }
+
+    /// Create a BT agent with full cognitive config.
+    pub fn with_config(start_x: usize, start_y: usize, noise: f32, memory_capacity: usize) -> Self {
+        Self {
+            noise,
+            memory: SpatialMemory::new(memory_capacity),
             ..Self::new(start_x, start_y)
         }
     }
@@ -121,6 +134,8 @@ impl BehaviorTreeAgent {
 
     /// Advance the behavior tree by one tick.
     pub fn update(&mut self, grid: &Grid) {
+        // Record current position in memory.
+        self.memory.record(self.pos);
         // Decision noise: with probability `noise`, take a random move and skip BT.
         let mut rng = rand::thread_rng();
         if self.noise > 0.0 && rng.r#gen::<f32>() < self.noise {
