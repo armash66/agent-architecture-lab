@@ -25,8 +25,12 @@ pub struct FSMAgent {
     pos: Position,
     state: FSMState,
     energy: u32,
-    /// Probability (0.0–1.0) of taking a random action instead of the planned one.
+    /// Base noise probability (0.0–1.0).
     noise: f32,
+    /// Current exploration multiplier (starts at 1.0, decays each tick).
+    exploration_rate: f32,
+    /// Per-tick multiplicative decay for exploration_rate (e.g. 0.995).
+    decay_rate: f32,
     /// Visited-cell memory with bounded capacity.
     memory: SpatialMemory,
 }
@@ -42,6 +46,8 @@ impl FSMAgent {
             state: FSMState::Exploring,
             energy: 100,
             noise: 0.0,
+            exploration_rate: 1.0,
+            decay_rate: 1.0,
             memory: SpatialMemory::new(0),
         }
     }
@@ -55,9 +61,16 @@ impl FSMAgent {
     }
 
     /// Create an FSM agent with full cognitive config.
-    pub fn with_config(start_x: usize, start_y: usize, noise: f32, memory_capacity: usize) -> Self {
+    pub fn with_config(
+        start_x: usize,
+        start_y: usize,
+        noise: f32,
+        memory_capacity: usize,
+        decay_rate: f32,
+    ) -> Self {
         Self {
             noise,
+            decay_rate,
             memory: SpatialMemory::new(memory_capacity),
             ..Self::new(start_x, start_y)
         }
@@ -106,6 +119,9 @@ impl FSMAgent {
     pub fn update(&mut self, grid: &Grid) {
         // Record current position in memory.
         self.memory.record(self.pos);
+
+        // Decay exploration rate.
+        self.exploration_rate *= self.decay_rate;
         // Check for goal condition first.
         if self.pos == grid.goal && self.state != FSMState::FoundGoal {
             self.state = FSMState::FoundGoal;
@@ -137,9 +153,10 @@ impl FSMAgent {
 
         let action = self.decide_next_action(grid);
 
-        // Decision noise: with probability `noise`, take a random move instead.
+        // Decision noise (modulated by exploration rate).
+        let effective_noise = self.noise * self.exploration_rate;
         let mut rng = rand::thread_rng();
-        if self.noise > 0.0 && rng.r#gen::<f32>() < self.noise {
+        if effective_noise > 0.0 && rng.r#gen::<f32>() < effective_noise {
             if let Some((nx, ny)) = grid.random_walkable_neighbor(self.pos.x, self.pos.y) {
                 self.pos = Position { x: nx, y: ny };
                 if self.energy > 0 {

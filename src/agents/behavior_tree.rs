@@ -78,9 +78,9 @@ pub struct BehaviorTreeAgent {
     pos: Position,
     energy: u32,
     root: Node,
-    /// Probability (0.0–1.0) of taking a random action instead of following BT.
     noise: f32,
-    /// Visited-cell memory with bounded capacity.
+    exploration_rate: f32,
+    decay_rate: f32,
     memory: SpatialMemory,
 }
 
@@ -103,6 +103,8 @@ impl BehaviorTreeAgent {
             energy: 100,
             root,
             noise: 0.0,
+            exploration_rate: 1.0,
+            decay_rate: 1.0,
             memory: SpatialMemory::new(0),
         }
     }
@@ -116,9 +118,16 @@ impl BehaviorTreeAgent {
     }
 
     /// Create a BT agent with full cognitive config.
-    pub fn with_config(start_x: usize, start_y: usize, noise: f32, memory_capacity: usize) -> Self {
+    pub fn with_config(
+        start_x: usize,
+        start_y: usize,
+        noise: f32,
+        memory_capacity: usize,
+        decay_rate: f32,
+    ) -> Self {
         Self {
             noise,
+            decay_rate,
             memory: SpatialMemory::new(memory_capacity),
             ..Self::new(start_x, start_y)
         }
@@ -136,9 +145,14 @@ impl BehaviorTreeAgent {
     pub fn update(&mut self, grid: &Grid) {
         // Record current position in memory.
         self.memory.record(self.pos);
-        // Decision noise: with probability `noise`, take a random move and skip BT.
+
+        // Decay exploration rate.
+        self.exploration_rate *= self.decay_rate;
+
+        // Decision noise (modulated by exploration rate).
+        let effective_noise = self.noise * self.exploration_rate;
         let mut rng = rand::thread_rng();
-        if self.noise > 0.0 && rng.r#gen::<f32>() < self.noise {
+        if effective_noise > 0.0 && rng.r#gen::<f32>() < effective_noise {
             if let Some((nx, ny)) = grid.random_walkable_neighbor(self.pos.x, self.pos.y) {
                 self.pos = Position { x: nx, y: ny };
                 self.energy = self.energy.saturating_sub(1);

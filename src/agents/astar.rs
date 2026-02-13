@@ -13,9 +13,9 @@ pub struct AStarAgent {
     stuck: bool,
     /// Max node expansions for bounded A*. `None` = unlimited.
     planning_limit: Option<usize>,
-    /// Probability (0.0–1.0) of taking a random action instead of following the path.
     noise: f32,
-    /// Visited-cell memory with bounded capacity.
+    exploration_rate: f32,
+    decay_rate: f32,
     memory: SpatialMemory,
 }
 
@@ -31,6 +31,8 @@ impl AStarAgent {
             stuck: false,
             planning_limit: None,
             noise: 0.0,
+            exploration_rate: 1.0,
+            decay_rate: 1.0,
             memory: SpatialMemory::new(0),
         }
     }
@@ -50,10 +52,12 @@ impl AStarAgent {
         planning_limit: Option<usize>,
         noise: f32,
         memory_capacity: usize,
+        decay_rate: f32,
     ) -> Self {
         Self {
             planning_limit,
             noise,
+            decay_rate,
             memory: SpatialMemory::new(memory_capacity),
             ..Self::new(start_x, start_y)
         }
@@ -73,6 +77,9 @@ impl AStarAgent {
     pub fn update(&mut self, grid: &Grid) {
         // Record current position in memory.
         self.memory.record(self.pos);
+
+        // Decay exploration rate.
+        self.exploration_rate *= self.decay_rate;
         // ... (existing update logic) ...
         // If we already know there's no path, do nothing.
         if self.stuck {
@@ -113,9 +120,10 @@ impl AStarAgent {
 
         // Move along the path by one step, if possible.
         if self.path_index + 1 < self.path.len() {
-            // Decision noise: with probability `noise`, take a random move instead.
+            // Decision noise (modulated by exploration rate).
+            let effective_noise = self.noise * self.exploration_rate;
             let mut rng = rand::thread_rng();
-            if self.noise > 0.0 && rng.r#gen::<f32>() < self.noise {
+            if effective_noise > 0.0 && rng.r#gen::<f32>() < effective_noise {
                 if let Some((nx, ny)) = grid.random_walkable_neighbor(self.pos.x, self.pos.y) {
                     self.pos = Position { x: nx, y: ny };
                     // Invalidate path so we re-plan next tick.
