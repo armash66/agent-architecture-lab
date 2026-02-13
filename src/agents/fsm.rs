@@ -18,11 +18,13 @@ pub enum Action {
     None,
 }
 
-/// Deterministic FSM-based agent.
+/// FSM-based agent with optional decision noise.
 pub struct FSMAgent {
     pos: Position,
     state: FSMState,
     energy: u32,
+    /// Probability (0.0–1.0) of taking a random action instead of the planned one.
+    noise: f32,
 }
 
 impl FSMAgent {
@@ -35,6 +37,15 @@ impl FSMAgent {
             },
             state: FSMState::Exploring,
             energy: 100,
+            noise: 0.0,
+        }
+    }
+
+    /// Create an FSM agent with decision noise.
+    pub fn with_noise(start_x: usize, start_y: usize, noise: f32) -> Self {
+        Self {
+            noise,
+            ..Self::new(start_x, start_y)
         }
     }
 
@@ -109,6 +120,20 @@ impl FSMAgent {
         }
 
         let action = self.decide_next_action(grid);
+
+        // Decision noise: with probability `noise`, take a random move instead.
+        let mut rng = rand::thread_rng();
+        if self.noise > 0.0 && rng.r#gen::<f32>() < self.noise {
+            if let Some((nx, ny)) = grid.random_walkable_neighbor(self.pos.x, self.pos.y) {
+                self.pos = Position { x: nx, y: ny };
+                if self.energy > 0 {
+                    self.energy -= 1;
+                }
+                println!("FSM: Noise! Random move to ({}, {})", nx, ny);
+                return;
+            }
+        }
+
         match action {
             Action::MoveRandomly => {
                 println!(

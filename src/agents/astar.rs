@@ -1,3 +1,4 @@
+use rand::Rng;
 use crate::algorithms::astar::find_path;
 use crate::engine::world::{Grid, Position};
 
@@ -11,6 +12,8 @@ pub struct AStarAgent {
     stuck: bool,
     /// Max node expansions for bounded A*. `None` = unlimited.
     planning_limit: Option<usize>,
+    /// Probability (0.0–1.0) of taking a random action instead of following the path.
+    noise: f32,
 }
 
 impl AStarAgent {
@@ -24,6 +27,7 @@ impl AStarAgent {
             path_index: 0,
             stuck: false,
             planning_limit: None,
+            noise: 0.0,
         }
     }
 
@@ -31,6 +35,15 @@ impl AStarAgent {
     pub fn with_planning_limit(start_x: usize, start_y: usize, limit: usize) -> Self {
         Self {
             planning_limit: Some(limit),
+            ..Self::new(start_x, start_y)
+        }
+    }
+
+    /// Create an A* agent with cognitive parameters.
+    pub fn with_config(start_x: usize, start_y: usize, planning_limit: Option<usize>, noise: f32) -> Self {
+        Self {
+            planning_limit,
+            noise,
             ..Self::new(start_x, start_y)
         }
     }
@@ -87,6 +100,18 @@ impl AStarAgent {
 
         // Move along the path by one step, if possible.
         if self.path_index + 1 < self.path.len() {
+            // Decision noise: with probability `noise`, take a random move instead.
+            let mut rng = rand::thread_rng();
+            if self.noise > 0.0 && rng.r#gen::<f32>() < self.noise {
+                if let Some((nx, ny)) = grid.random_walkable_neighbor(self.pos.x, self.pos.y) {
+                    self.pos = Position { x: nx, y: ny };
+                    // Invalidate path so we re-plan next tick.
+                    self.path.clear();
+                    println!("A*: Noise! Random move to ({}, {})", nx, ny);
+                    return;
+                }
+            }
+
             self.path_index += 1;
             let (nx, ny) = self.path[self.path_index];
             self.pos = Position { x: nx, y: ny };

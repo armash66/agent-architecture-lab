@@ -46,4 +46,26 @@ impl Grid {
         }
         self.tiles[y][x]
     }
+
+    /// Return a random walkable neighbor of `(x, y)`, or `None` if boxed in.
+    pub fn random_walkable_neighbor(&self, x: usize, y: usize) -> Option<(usize, usize)> {
+        use rand::seq::SliceRandom;
+
+        let mut candidates = Vec::new();
+        if x > 0 && self.is_walkable(x - 1, y) {
+            candidates.push((x - 1, y));
+        }
+        if x + 1 < self.width && self.is_walkable(x + 1, y) {
+            candidates.push((x + 1, y));
+        }
+        if y > 0 && self.is_walkable(x, y - 1) {
+            candidates.push((x, y - 1));
+        }
+        if y + 1 < self.height && self.is_walkable(x, y + 1) {
+            candidates.push((x, y + 1));
+        }
+
+        let mut rng = rand::thread_rng();
+        candidates.choose(&mut rng).copied()
+    }
 }

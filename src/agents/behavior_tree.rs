@@ -77,6 +77,8 @@ pub struct BehaviorTreeAgent {
     pos: Position,
     energy: u32,
     root: Node,
+    /// Probability (0.0–1.0) of taking a random action instead of following BT.
+    noise: f32,
 }
 
 impl BehaviorTreeAgent {
@@ -97,6 +99,15 @@ impl BehaviorTreeAgent {
             },
             energy: 100,
             root,
+            noise: 0.0,
+        }
+    }
+
+    /// Create a BT agent with decision noise.
+    pub fn with_noise(start_x: usize, start_y: usize, noise: f32) -> Self {
+        Self {
+            noise,
+            ..Self::new(start_x, start_y)
         }
     }
 
@@ -110,6 +121,17 @@ impl BehaviorTreeAgent {
 
     /// Advance the behavior tree by one tick.
     pub fn update(&mut self, grid: &Grid) {
+        // Decision noise: with probability `noise`, take a random move and skip BT.
+        let mut rng = rand::thread_rng();
+        if self.noise > 0.0 && rng.r#gen::<f32>() < self.noise {
+            if let Some((nx, ny)) = grid.random_walkable_neighbor(self.pos.x, self.pos.y) {
+                self.pos = Position { x: nx, y: ny };
+                self.energy = self.energy.saturating_sub(1);
+                println!("BT: Noise! Random move to ({}, {})", nx, ny);
+                return;
+            }
+        }
+
         // Work around Rust's borrow checker by temporarily taking ownership
         // of the root node while ticking.
         let mut root = std::mem::replace(&mut self.root, Node::Action(noop_action));
