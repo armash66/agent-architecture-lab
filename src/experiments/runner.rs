@@ -29,6 +29,12 @@ pub struct ExperimentConfig {
     pub agent_type: AgentType,
     /// Maximum steps per episode before we declare failure.
     pub max_steps: u32,
+    // --- Cognitive parameters ---
+    pub noise: f32,
+    /// A* planning limit. `None` = unlimited.
+    pub planning_limit: Option<usize>,
+    pub memory_capacity: usize,
+    pub decay_rate: f32,
 }
 
 impl Default for ExperimentConfig {
@@ -40,6 +46,10 @@ impl Default for ExperimentConfig {
             obstacle_density: 0.0,
             agent_type: AgentType::AStar,
             max_steps: 500,
+            noise: 0.0,
+            planning_limit: None,
+            memory_capacity: 0,
+            decay_rate: 1.0,
         }
     }
 }
@@ -83,14 +93,15 @@ fn run_single_episode(config: &ExperimentConfig, episode_idx: u32) -> EpisodeLog
     let mut success = false;
     let energy_remaining: u32;
 
+    let goal = Position {
+        x: config.grid_width - 1,
+        y: config.grid_height - 1,
+    };
+    let grid = make_grid_with_obstacles(config, goal);
+
     match config.agent_type {
         AgentType::Fsm => {
-            let goal = Position {
-                x: config.grid_width - 1,
-                y: config.grid_height - 1,
-            };
-            let grid = make_grid_with_obstacles(config, goal);
-            let mut agent = FSMAgent::new(0, 0);
+            let mut agent = FSMAgent::with_config(0, 0, config.noise, config.memory_capacity, config.decay_rate);
 
             while steps < config.max_steps {
                 if agent.state() == FSMState::FoundGoal {
@@ -104,32 +115,30 @@ fn run_single_episode(config: &ExperimentConfig, episode_idx: u32) -> EpisodeLog
             energy_remaining = agent.energy();
         }
         AgentType::AStar => {
-            let goal = Position {
-                x: config.grid_width - 1,
-                y: config.grid_height - 1,
-            };
-            let grid = make_grid_with_obstacles(config, goal);
-            let mut agent = AStarAgent::new(0, 0);
+            let mut agent = AStarAgent::with_config(
+                0, 0,
+                config.planning_limit,
+                config.noise,
+                config.memory_capacity,
+                config.decay_rate,
+            );
 
             while steps < config.max_steps {
                 if agent.position() == grid.goal {
                     success = true;
                     break;
                 }
+                if agent.is_stuck() {
+                    break;
+                }
                 agent.update(&grid);
                 steps += 1;
             }
 
-            // A* agent currently does not track energy.
             energy_remaining = 0;
         }
         AgentType::BehaviorTree => {
-            let goal = Position {
-                x: config.grid_width - 1,
-                y: config.grid_height - 1,
-            };
-            let grid = make_grid_with_obstacles(config, goal);
-            let mut agent = BehaviorTreeAgent::new(0, 0);
+            let mut agent = BehaviorTreeAgent::with_config(0, 0, config.noise, config.memory_capacity, config.decay_rate);
 
             while steps < config.max_steps {
                 if agent.position() == grid.goal {
@@ -154,6 +163,10 @@ fn run_single_episode(config: &ExperimentConfig, episode_idx: u32) -> EpisodeLog
         steps,
         success,
         energy_remaining,
+        noise: config.noise,
+        planning_limit: config.planning_limit.unwrap_or(0) as u32,
+        memory_capacity: config.memory_capacity as u32,
+        decay_rate: config.decay_rate,
     }
 }
 
@@ -176,4 +189,3 @@ fn make_grid_with_obstacles(config: &ExperimentConfig, goal: Position) -> Grid {
 
     Grid::with_obstacles(config.grid_width, config.grid_height, goal, &obstacles)
 }
-

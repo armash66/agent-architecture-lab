@@ -14,6 +14,15 @@ pub struct EpisodeLog {
     /// Agent's remaining energy at the end of the episode
     /// (0 for agents that do not track energy).
     pub energy_remaining: u32,
+    // --- Cognitive parameters ---
+    /// Decision noise probability (0.0–1.0).
+    pub noise: f32,
+    /// A* planning limit (0 = unlimited).
+    pub planning_limit: u32,
+    /// Spatial memory capacity (0 = disabled).
+    pub memory_capacity: u32,
+    /// Exploration decay rate per tick.
+    pub decay_rate: f32,
 }
 
 /// Optional per-step log for more detailed analysis.
