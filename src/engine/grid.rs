@@ -1,6 +1,7 @@
 use super::position::Position;
 
 /// A simple 2D grid with a single goal cell.
+#[derive(Clone)]
 pub struct Grid {
     pub width: usize,
     pub height: usize,
