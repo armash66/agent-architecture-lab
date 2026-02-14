@@ -96,9 +96,6 @@ struct SimState {
     all_done_printed: bool,
     // Tracks which agents visited a cell: (x, y) -> Set of AgentKinds
     cell_visitors: HashMap<(usize, usize), HashSet<AgentKind>>,
-    // Flag to trigger visual reset
-    should_reset_visuals: bool,
-    // Entity handles for grid tiles allow us to change their color
     grid_tile_entities: Vec<Vec<Entity>>,
 }
 
@@ -142,7 +139,7 @@ impl SimState {
         self.bt_done = false;
         self.all_done_printed = false;
         self.cell_visitors.clear();
-        self.should_reset_visuals = true;
+        self.cell_visitors.clear();
     }
 }
 
@@ -363,7 +360,7 @@ fn setup(
         bt_done: false,
         all_done_printed: false,
         cell_visitors: HashMap::new(),
-        should_reset_visuals: false,
+
         grid_tile_entities,
     });
 }
@@ -682,7 +679,7 @@ fn apply_shake(
 }
 
 fn render_heatmap(
-    mut sim: ResMut<SimState>, // Mutable for resetting visual flag
+    sim: Res<SimState>,
     ui_state: Res<UiState>,
     heatmap_mats: Res<HeatmapMaterials>,
     mut query: Query<&mut MeshMaterial3d<StandardMaterial>>,
@@ -691,53 +688,34 @@ fn render_heatmap(
         return;
     }
 
-    // ─── HANDLE RESET ───────────────────────────────────────
-    if sim.should_reset_visuals {
-        for y in 0..GRID_H {
-            for x in 0..GRID_W {
-                 let entity = sim.grid_tile_entities[y][x];
-                 if entity == Entity::PLACEHOLDER { continue; }
-                 
-                 if let Ok(mut mat) = query.get_mut(entity) {
-                     let new_mat = if (x + y) % 2 == 0 {
-                         heatmap_mats.default_light.clone()
-                     } else {
-                         heatmap_mats.default_dark.clone()
-                     };
-                     if mat.0 != new_mat {
-                         mat.0 = new_mat;
-                     }
-                 }
+    for y in 0..GRID_H {
+        for x in 0..GRID_W {
+            let entity = sim.grid_tile_entities[y][x];
+            if entity == Entity::PLACEHOLDER { continue; }
+
+            if let Ok(mut mat) = query.get_mut(entity) {
+                let visitors = sim.cell_visitors.get(&(x, y));
+                
+                let desired_mat = if let Some(visitors) = visitors {
+                    if visitors.len() > 1 {
+                        heatmap_mats.multi_visited.clone()
+                    } else if visitors.contains(&AgentKind::Fsm) {
+                        heatmap_mats.fsm_visited.clone()
+                    } else if visitors.contains(&AgentKind::AStar) {
+                        heatmap_mats.astar_visited.clone()
+                    } else if visitors.contains(&AgentKind::BehaviorTree) {
+                        heatmap_mats.bt_visited.clone()
+                    } else {
+                        if (x + y) % 2 == 0 { heatmap_mats.default_light.clone() } else { heatmap_mats.default_dark.clone() }
+                    }
+                } else {
+                    if (x + y) % 2 == 0 { heatmap_mats.default_light.clone() } else { heatmap_mats.default_dark.clone() }
+                };
+
+                if mat.0 != desired_mat {
+                    mat.0 = desired_mat;
+                }
             }
-        }
-        sim.should_reset_visuals = false;
-        // Don't return, allow new visits to paint immediately if any
-    }
-
-    // ─── RENDER VISITS ──────────────────────────────────────
-    for ((x, y), visitors) in &sim.cell_visitors {
-        if *x >= GRID_W || *y >= GRID_H { continue; }
-        
-        let entity = sim.grid_tile_entities[*y][*x];
-        if entity == Entity::PLACEHOLDER { continue; }
-
-        if let Ok(mut mat) = query.get_mut(entity) {
-            let new_mat = if visitors.len() > 1 {
-                heatmap_mats.multi_visited.clone()
-            } else if visitors.contains(&AgentKind::Fsm) {
-                heatmap_mats.fsm_visited.clone()
-            } else if visitors.contains(&AgentKind::AStar) {
-                heatmap_mats.astar_visited.clone()
-            } else if visitors.contains(&AgentKind::BehaviorTree) {
-                heatmap_mats.bt_visited.clone()
-            } else {
-                // Determine pattern if no visitors (shouldn't happen in this loop)
-                if (x + y) % 2 == 0 { heatmap_mats.default_light.clone() } else { heatmap_mats.default_dark.clone() }
-            };
-             
-             if mat.0 != new_mat {
-                 mat.0 = new_mat;
-             }
         }
     }
 }
