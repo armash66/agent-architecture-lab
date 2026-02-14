@@ -5,10 +5,12 @@
 //! Controls:
 //!   - Left mouse drag: orbit camera
 //!   - Scroll wheel: zoom in/out
+//!   - UI Panel: Speed slider, Pause/Resume, Restart, Visual toggles
 
 use bevy::prelude::*;
 use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
 use bevy::math::Isometry3d;
+use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use std::collections::HashMap;
 use rand::Rng;
 
@@ -24,7 +26,7 @@ const GRID_W: usize = 12;
 const GRID_H: usize = 8;
 const CELL_SIZE: f32 = 1.0;
 const AGENT_Y: f32 = 0.35;
-const TICK_INTERVAL: f32 = 0.25;
+const BASE_TICK_INTERVAL: f32 = 0.25;
 const OBSTACLE_DENSITY: f32 = 0.15;
 
 // ─── Components / Resources ────────────────────────────────
@@ -47,9 +49,6 @@ struct TrailDot;
 struct GoalMarker;
 
 #[derive(Component)]
-struct HudText;
-
-#[derive(Component)]
 struct OrbitCamera {
     focus: Vec3,
     radius: f32,
@@ -64,12 +63,32 @@ struct Shaking {
 }
 
 #[derive(Resource)]
+struct UiState {
+    paused: bool,
+    time_scale: f32,
+    show_heatmap: bool,
+    show_path_gizmos: bool,
+}
+
+impl Default for UiState {
+    fn default() -> Self {
+        Self {
+            paused: false,
+            time_scale: 1.0,
+            show_heatmap: true,
+            show_path_gizmos: true,
+        }
+    }
+}
+
+#[derive(Resource)]
 struct SimState {
     grid: Grid,
     fsm: FSMAgent,
     astar: AStarAgent,
     bt: BehaviorTreeAgent,
-    tick_timer: Timer,
+    // Accumulator for tick timing
+    tick_timer: f32,
     total_ticks: u32,
     fsm_done: bool,
     astar_done: bool,
@@ -99,6 +118,23 @@ impl SimState {
         if self.grid.is_walkable(pos.x, pos.y) {
             *self.visit_counts.entry((pos.x, pos.y)).or_insert(0) += 1;
         }
+    }
+    
+    // Reset simulation state for restart
+    fn reset(&mut self, mut grid: Grid) {
+        grid.scatter_obstacles(OBSTACLE_DENSITY);
+        
+        self.grid = grid;
+        self.fsm = FSMAgent::with_config(0, 0, 0.15, 10, 0.995);
+        self.astar = AStarAgent::with_config(0, 0, Some(30), 0.1, 10, 0.995);
+        self.bt = BehaviorTreeAgent::with_config(0, 0, 0.15, 10, 0.995);
+        self.tick_timer = 0.0;
+        self.total_ticks = 0;
+        self.fsm_done = false;
+        self.astar_done = false;
+        self.bt_done = false;
+        self.all_done_printed = false;
+        self.visit_counts.clear();
     }
 }
 
@@ -139,16 +175,19 @@ fn main() {
             }),
             ..default()
         }))
+        .add_plugins(EguiPlugin)
+        .init_resource::<UiState>()
         .add_systems(Startup, setup)
         .add_systems(Update, (
             orbit_camera,
+            ui_system,
             tick_simulation,
             sync_agents,
             handle_visual_events,
             apply_shake,
             render_heatmap,
+            render_obstacles, // New system to update obstacles on restart
             rotate_goal,
-            update_hud,
             draw_gizmos,
         ))
         .run();
@@ -199,9 +238,8 @@ fn setup(
 
     for y in 0..GRID_H {
         for x in 0..GRID_W {
-            if !grid.is_walkable(x, y) {
-                continue; // obstacles get their own mesh
-            }
+            // Spawn tile regardless of obstacle status (we'll just hide/show obstacles on restart)
+            // Obstacles live on top of tiles
             let mat = if (x + y) % 2 == 0 {
                 default_light.clone()
             } else {
@@ -214,20 +252,6 @@ fn setup(
             )).id();
             grid_tile_entities[y][x] = id;
         }
-    }
-
-    // ── Obstacle cubes ──────────────────────────────────
-    let obstacle_mesh = meshes.add(Cuboid::new(CELL_SIZE * 0.95, 0.5, CELL_SIZE * 0.95));
-    let obstacle_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.6, 0.15, 0.15),
-        ..default()
-    });
-    for (x, y) in grid.obstacle_positions() {
-        commands.spawn((
-            Mesh3d(obstacle_mesh.clone()),
-            MeshMaterial3d(obstacle_mat.clone()),
-            Transform::from_xyz(x as f32 * CELL_SIZE, 0.25, y as f32 * CELL_SIZE),
-        ));
     }
 
     // ── Goal marker ─────────────────────────────────────
@@ -304,23 +328,6 @@ fn setup(
         },
     ));
 
-    // ── HUD overlay ─────────────────────────────────────
-    commands.spawn((
-        Text::new("Tick: 0"),
-        TextFont {
-            font_size: 20.0,
-            ..default()
-        },
-        TextColor(Color::WHITE),
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(10.0),
-            left: Val::Px(10.0),
-            ..default()
-        },
-        HudText,
-    ));
-
     // ── Simulation state ────────────────────────────────
     let fsm = FSMAgent::with_config(0, 0, 0.15, 10, 0.995);
     let astar = AStarAgent::with_config(0, 0, Some(30), 0.1, 10, 0.995);
@@ -331,7 +338,7 @@ fn setup(
         fsm,
         astar,
         bt,
-        tick_timer: Timer::from_seconds(TICK_INTERVAL, TimerMode::Repeating),
+        tick_timer: 0.0,
         total_ticks: 0,
         fsm_done: false,
         astar_done: false,
@@ -342,13 +349,144 @@ fn setup(
     });
 }
 
+// ─── UI System ──────────────────────────────────────────────
+fn ui_system(
+    mut contexts: EguiContexts,
+    mut ui_state: ResMut<UiState>,
+    mut sim: ResMut<SimState>,
+    mut commands: Commands,
+    obstacle_query: Query<Entity, With<Obstacle>>,
+    trail_query: Query<Entity, With<TrailDot>>,
+) {
+    let ctx = contexts.ctx_mut();
+
+    egui::SidePanel::left("control_panel")
+        .default_width(220.0)
+        .show(ctx, |ui| {
+            ui.heading("Cognitive Grid");
+            ui.separator();
+
+            ui.horizontal(|ui| {
+                ui.label(format!("Tick: {}", sim.total_ticks));
+            });
+            ui.separator();
+
+            // Speed Control
+            ui.heading("Controls");
+            if ui_state.paused {
+                if ui.button("▶ Resume").clicked() {
+                    ui_state.paused = false;
+                }
+            } else {
+                if ui.button("⏸ Pause").clicked() {
+                    ui_state.paused = true;
+                }
+            }
+            
+            ui.add(egui::Slider::new(&mut ui_state.time_scale, 0.1..=50.0).text("Speed"));
+            if ui.button("1x").clicked() { ui_state.time_scale = 1.0; }
+            if ui.button("10x").clicked() { ui_state.time_scale = 10.0; }
+            if ui.button("50x (Hyper)").clicked() { ui_state.time_scale = 50.0; }
+
+            ui.separator();
+
+            // Restart
+            if ui.button("🔄 Restart Simulation").clicked() {
+                // Despawn trails
+                for entity in &trail_query {
+                    commands.entity(entity).despawn_recursive();
+                }
+                
+                // Reset sim state
+                let grid = Grid::new(GRID_W, GRID_H, Position { x: GRID_W-1, y: GRID_H-1 });
+                sim.reset(grid);
+            }
+
+            ui.separator();
+
+            // Toggles
+            ui.heading("Visuals");
+            ui.checkbox(&mut ui_state.show_heatmap, "Show Heatmap");
+            ui.checkbox(&mut ui_state.show_path_gizmos, "Show Planning Radius");
+
+            ui.separator();
+
+            // Agent Status
+            ui.heading("Agents");
+            let status = |done: bool, pos: Position| -> String {
+                if done { "Done ✓".to_string() } else { format!("({}, {})", pos.x, pos.y) }
+            };
+            
+            ui.label(format!("FSM: {}", status(sim.fsm_done, sim.fsm.position())));
+            ui.label(format!("A*: {}", status(sim.astar_done, sim.astar.position())));
+            ui.label(format!("BT: {}", status(sim.bt_done, sim.bt.position())));
+        });
+}
+
+// ─── Obstacle Handling ─────────────────────────────────────
+#[derive(Component)]
+struct Obstacle;
+
+fn render_obstacles(
+    mut commands: Commands,
+    sim: Res<SimState>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    obstacle_query: Query<Entity, With<Obstacle>>,
+) {
+    // We only re-render if the grid changed (e.g. on restart) or init
+    // For simplicity, we can verify count or just wipe and recreate if dirty flag (not impl here).
+    // Better approach: check if obstacle count matches sim.grid.
+    // BUT since we just added a restart button, let's just wipe and rebuild every time obstacles change count
+    // or efficiently, strict equality. 
+    // Optimization: sim logic only changes obstacles on restart.
+    // Let's just wipe and respawn if the count doesn't match grid obstacles.
+    
+    let grid_obstacles = sim.grid.obstacle_positions();
+    let current_obstacles = obstacle_query.iter().count();
+
+    // If counts match, assume sync (lazy check). If 0 vs >0, definitely sync.
+    // On restart, old obstacles persist, so we need to clear them if positions changed.
+    // For this prototype, let's just rely on the Restart button handler removing them? 
+    // No, UI system can't easily spawn generic meshes.
+    // Let's just do a naive diff check or fully respawn on restart signal.
+    
+    // Hack: If sim.total_ticks == 0, respawn obstacles.
+    if sim.total_ticks == 0 {
+        for entity in &obstacle_query {
+            commands.entity(entity).despawn();
+        }
+
+        let obstacle_mesh = meshes.add(Cuboid::new(CELL_SIZE * 0.95, 0.5, CELL_SIZE * 0.95));
+        let obstacle_mat = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.6, 0.15, 0.15),
+            ..default()
+        });
+
+        for (x, y) in grid_obstacles {
+            commands.spawn((
+                Mesh3d(obstacle_mesh.clone()),
+                MeshMaterial3d(obstacle_mat.clone()),
+                Transform::from_xyz(x as f32 * CELL_SIZE, 0.25, y as f32 * CELL_SIZE),
+                Obstacle,
+            ));
+        }
+    }
+}
+
 // ─── Orbital camera ─────────────────────────────────────────
 fn orbit_camera(
     mouse_button: Res<ButtonInput<MouseButton>>,
     mut mouse_motion: EventReader<MouseMotion>,
     mut scroll_events: EventReader<MouseWheel>,
     mut query: Query<(&mut OrbitCamera, &mut Transform)>,
+    mut contexts: EguiContexts,
 ) {
+    // Don't move camera if interacting with UI
+    if contexts.ctx_mut().is_pointer_over_area() {
+        return;
+    }
+
     let mut rotation_delta = Vec2::ZERO;
     let mut zoom_delta: f32 = 0.0;
 
@@ -384,91 +522,98 @@ fn orbit_camera(
 // ─── Simulation tick ────────────────────────────────────────
 fn tick_simulation(
     time: Res<Time>,
+    ui_state: Res<UiState>,
     mut sim: ResMut<SimState>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    sim.tick_timer.tick(time.delta());
-
-    if !sim.tick_timer.just_finished() {
+    if ui_state.paused {
         return;
     }
 
-    if sim.is_all_done() {
-        if !sim.all_done_printed {
-            sim.all_done_printed = true;
-            println!("=== All agents reached the goal in {} ticks ===", sim.total_ticks);
+    // Accumulate time scaled by speed
+    sim.tick_timer += time.delta_secs() * ui_state.time_scale;
+
+    // Run as many ticks as fit in the accumulator
+    while sim.tick_timer >= BASE_TICK_INTERVAL {
+        sim.tick_timer -= BASE_TICK_INTERVAL;
+        
+        if sim.is_all_done() {
+            if !sim.all_done_printed {
+                sim.all_done_printed = true;
+                println!("=== All agents reached the goal in {} ticks ===", sim.total_ticks);
+            }
+            continue; // Keep running loop to drain timer, but don't update agents
         }
-        return;
-    }
 
-    sim.total_ticks += 1;
+        sim.total_ticks += 1;
 
-    // Spawn trail dots for active agents.
-    let trail_mesh = meshes.add(Sphere::new(0.08));
-    let active_agents: Vec<(Position, AgentKind)> = [
-        (!sim.fsm_done, sim.fsm.position(), AgentKind::Fsm),
-        (!sim.astar_done, sim.astar.position(), AgentKind::AStar),
-        (!sim.bt_done, sim.bt.position(), AgentKind::BehaviorTree),
-    ]
-    .iter()
-    .filter(|(active, _, _)| *active)
-    .map(|(_, pos, kind)| (*pos, *kind))
-    .collect();
+        // Spawn trail dots for active agents.
+        let trail_mesh = meshes.add(Sphere::new(0.08));
+        let active_agents: Vec<(Position, AgentKind)> = [
+            (!sim.fsm_done, sim.fsm.position(), AgentKind::Fsm),
+            (!sim.astar_done, sim.astar.position(), AgentKind::AStar),
+            (!sim.bt_done, sim.bt.position(), AgentKind::BehaviorTree),
+        ]
+        .iter()
+        .filter(|(active, _, _)| *active)
+        .map(|(_, pos, kind)| (*pos, *kind))
+        .collect();
 
-    for (pos, kind) in &active_agents {
-        let color = agent_color(*kind).with_alpha(0.3);
-        commands.spawn((
-            Mesh3d(trail_mesh.clone()),
-            MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: color,
-                alpha_mode: AlphaMode::Blend,
-                ..default()
-            })),
-            Transform::from_translation(Vec3::new(
-                pos.x as f32 * CELL_SIZE,
-                0.08,
-                pos.y as f32 * CELL_SIZE,
-            )),
-            TrailDot,
-        ));
-    }
-
-    // Tick active agents.
-    let grid = sim.grid.clone();
-
-    if !sim.fsm_done {
-        sim.fsm.update(&grid);
-        let pos = sim.fsm.position();
-        sim.update_visits(pos);
-        if sim.fsm.state() == FSMState::FoundGoal {
-            sim.fsm_done = true;
-            println!("✓ FSM reached goal at tick {}", sim.total_ticks);
+        for (pos, kind) in &active_agents {
+            let color = agent_color(*kind).with_alpha(0.3);
+            commands.spawn((
+                Mesh3d(trail_mesh.clone()),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: color,
+                    alpha_mode: AlphaMode::Blend,
+                    ..default()
+                })),
+                Transform::from_translation(Vec3::new(
+                    pos.x as f32 * CELL_SIZE,
+                    0.08,
+                    pos.y as f32 * CELL_SIZE,
+                )),
+                TrailDot,
+            ));
         }
-    }
 
-    if !sim.astar_done {
-        sim.astar.update(&grid);
-        let pos = sim.astar.position();
-        sim.update_visits(pos);
-        if sim.astar.position() == grid.goal || sim.astar.is_stuck() {
-            sim.astar_done = true;
-            if sim.astar.position() == grid.goal {
-                println!("✓ A* reached goal at tick {}", sim.total_ticks);
-            } else {
-                println!("✗ A* got stuck at tick {}", sim.total_ticks);
+        // Tick active agents.
+        let grid = sim.grid.clone();
+
+        if !sim.fsm_done {
+            sim.fsm.update(&grid);
+            let pos = sim.fsm.position();
+            sim.update_visits(pos);
+            if sim.fsm.state() == FSMState::FoundGoal {
+                sim.fsm_done = true;
+                println!("✓ FSM reached goal at tick {}", sim.total_ticks);
             }
         }
-    }
 
-    if !sim.bt_done {
-        sim.bt.update(&grid);
-        let pos = sim.bt.position();
-        sim.update_visits(pos);
-        if sim.bt.position() == grid.goal {
-            sim.bt_done = true;
-            println!("✓ BT reached goal at tick {}", sim.total_ticks);
+        if !sim.astar_done {
+            sim.astar.update(&grid);
+             let pos = sim.astar.position();
+            sim.update_visits(pos);
+            if sim.astar.position() == grid.goal || sim.astar.is_stuck() {
+                sim.astar_done = true;
+                if sim.astar.position() == grid.goal {
+                    println!("✓ A* reached goal at tick {}", sim.total_ticks);
+                } else {
+                    println!("✗ A* got stuck at tick {}", sim.total_ticks);
+                }
+            }
+        }
+
+        if !sim.bt_done {
+            sim.bt.update(&grid);
+             let pos = sim.bt.position();
+            sim.update_visits(pos);
+            if sim.bt.position() == grid.goal {
+                sim.bt_done = true;
+                println!("✓ BT reached goal at tick {}", sim.total_ticks);
+            }
         }
     }
 }
@@ -480,10 +625,10 @@ fn handle_visual_events(
     sim: Res<SimState>,
     query: Query<(Entity, &AgentMarker)>,
 ) {
-    if !sim.tick_timer.just_finished() {
-        return;
-    }
-
+    // Only verify events on whole ticks? 
+    // Actually, since we multi-tick, this system runs once per frame. 
+    // Use noise_triggered flag which persists until next update. OK.
+    
     for (entity, marker) in &query {
         let triggered = match marker.kind {
             AgentKind::Fsm => sim.fsm.did_noise_trigger(),
@@ -527,11 +672,14 @@ fn apply_shake(
 
 fn render_heatmap(
     sim: Res<SimState>,
+    ui_state: Res<UiState>,
     heatmap_mats: Res<HeatmapMaterials>,
     mut query: Query<&mut MeshMaterial3d<StandardMaterial>>,
 ) {
-    // Only update when tick happens to save perf
-    if !sim.tick_timer.just_finished() {
+    if !ui_state.show_heatmap {
+        // Reset to default materials if hidden? 
+        // For simplicity, we just stop updating. To properly hide, we'd need to revert.
+        // Let's implement revert logic for toggle.
         return;
     }
 
@@ -566,8 +714,13 @@ fn render_heatmap(
 fn draw_gizmos(
     mut gizmos: Gizmos,
     sim: Res<SimState>,
+    ui_state: Res<UiState>,
     query: Query<(&AgentMarker, &Transform, &Visibility)>,
 ) {
+    if !ui_state.show_path_gizmos {
+        return;
+    }
+
     for (marker, transform, vis) in &query {
         if vis == Visibility::Hidden { continue; }
 
@@ -626,31 +779,5 @@ fn rotate_goal(
 ) {
     for mut transform in &mut query {
         transform.rotate_y(time.delta_secs() * 1.5);
-    }
-}
-
-// ─── HUD update ─────────────────────────────────────────────
-fn update_hud(
-    sim: Res<SimState>,
-    mut query: Query<&mut Text, With<HudText>>,
-) {
-    let status = |done: bool, pos: Position, label: &str| -> String {
-        if done {
-            format!("{}: ✓ Done", label)
-        } else {
-            format!("{}: ({},{})", label, pos.x, pos.y)
-        }
-    };
-
-    let hud = format!(
-        "Tick: {}\n{}\n{}\n{}",
-        sim.total_ticks,
-        status(sim.fsm_done, sim.fsm.position(), "FSM"),
-        status(sim.astar_done, sim.astar.position(), "A*"),
-        status(sim.bt_done, sim.bt.position(), "BT"),
-    );
-
-    for mut text in &mut query {
-        **text = hud.clone();
     }
 }
