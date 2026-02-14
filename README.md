@@ -62,6 +62,19 @@ A deliberate agent that plans paths but has **limited foresight**.
 -   **Constraint**: `planning_radius`. It stops searching after $N$ nodes.
 -   **Behavior**: If the goal is outside the radius, it moves toward the node with the lowest heuristic cost ($h(n)$) within its horizon.
 
+```mermaid
+graph TD
+    Start[Start Search] --> Expansion{Nodes < Limit?}
+    Expansion -->|Yes| Expand[Expand Best Node]
+    Expand --> IsGoal{Is Goal?}
+    IsGoal -->|Yes| FullPath[Return Full Path]
+    IsGoal -->|No| Expansion
+    
+    Expansion -->|No / Limit Met| Bounded[Bounded Rationality Triggered]
+    Bounded --> BestHeuristic[Find Node with Min H-Cost]
+    BestHeuristic --> PartialPath[Return Partial Path]
+```
+
 ### 3. Behavior Tree (BT) 🟠
 A hierarchical agent that balances reactivity with goal-seeking. It uses a **Selector-Sequence** structure.
 
