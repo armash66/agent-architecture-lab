@@ -1,8 +1,13 @@
 //! 3D viewer for the Cognitive Grid simulation using Bevy 0.15.
 //!
 //! Run with: `cargo run --bin viewer`
+//!
+//! Controls:
+//!   - Left mouse drag: orbit camera
+//!   - Scroll wheel: zoom in/out
 
 use bevy::prelude::*;
+use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
 
 use cognitive_grid::agents::fsm::{FSMAgent, FSMState};
 use cognitive_grid::agents::astar::AStarAgent;
@@ -10,11 +15,12 @@ use cognitive_grid::agents::behavior_tree::BehaviorTreeAgent;
 use cognitive_grid::engine::world::{Grid, Position};
 
 // ─── Constants ──────────────────────────────────────────────
-const GRID_W: usize = 10;
-const GRID_H: usize = 5;
+const GRID_W: usize = 12;
+const GRID_H: usize = 8;
 const CELL_SIZE: f32 = 1.0;
 const AGENT_Y: f32 = 0.35;
-const TICK_INTERVAL: f32 = 0.25; // seconds between simulation ticks
+const TICK_INTERVAL: f32 = 0.25;
+const OBSTACLE_DENSITY: f32 = 0.15;
 
 // ─── Components / Resources ────────────────────────────────
 #[derive(Component)]
@@ -34,6 +40,17 @@ struct TrailDot;
 
 #[derive(Component)]
 struct GoalMarker;
+
+#[derive(Component)]
+struct HudText;
+
+#[derive(Component)]
+struct OrbitCamera {
+    focus: Vec3,
+    radius: f32,
+    yaw: f32,   // radians
+    pitch: f32, // radians
+}
 
 #[derive(Resource)]
 struct SimState {
@@ -56,10 +73,10 @@ impl SimState {
 }
 
 // ─── Helpers ────────────────────────────────────────────────
-fn grid_to_world(pos: Position) -> Vec3 {
+fn grid_to_world(pos: Position, y_offset: f32) -> Vec3 {
     Vec3::new(
         pos.x as f32 * CELL_SIZE,
-        AGENT_Y,
+        y_offset,
         pos.y as f32 * CELL_SIZE,
     )
 }
@@ -80,6 +97,15 @@ fn agent_label(kind: AgentKind) -> &'static str {
     }
 }
 
+// Vertical offsets to prevent z-fighting when agents overlap.
+fn agent_y_offset(kind: AgentKind) -> f32 {
+    match kind {
+        AgentKind::Fsm => AGENT_Y,
+        AgentKind::AStar => AGENT_Y + 0.01,
+        AgentKind::BehaviorTree => AGENT_Y + 0.02,
+    }
+}
+
 // ─── Main ───────────────────────────────────────────────────
 fn main() {
     App::new()
@@ -92,7 +118,13 @@ fn main() {
             ..default()
         }))
         .add_systems(Startup, setup)
-        .add_systems(Update, (tick_simulation, sync_agents, rotate_goal))
+        .add_systems(Update, (
+            orbit_camera,
+            tick_simulation,
+            sync_agents,
+            rotate_goal,
+            update_hud,
+        ))
         .run();
 }
 
@@ -106,9 +138,10 @@ fn setup(
         x: GRID_W - 1,
         y: GRID_H - 1,
     };
-    let grid = Grid::new(GRID_W, GRID_H, goal);
+    let mut grid = Grid::new(GRID_W, GRID_H, goal);
+    grid.scatter_obstacles(OBSTACLE_DENSITY);
 
-    // Ground plane — one quad per cell for a checkerboard effect.
+    // ── Ground plane ────────────────────────────────────
     let cell_mesh = meshes.add(Cuboid::new(CELL_SIZE * 0.95, 0.05, CELL_SIZE * 0.95));
     let light_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.85, 0.85, 0.85),
@@ -121,6 +154,9 @@ fn setup(
 
     for y in 0..GRID_H {
         for x in 0..GRID_W {
+            if !grid.is_walkable(x, y) {
+                continue; // obstacles get their own mesh
+            }
             let mat = if (x + y) % 2 == 0 {
                 light_mat.clone()
             } else {
@@ -134,7 +170,21 @@ fn setup(
         }
     }
 
-    // Goal marker — glowing golden cylinder.
+    // ── Obstacle cubes ──────────────────────────────────
+    let obstacle_mesh = meshes.add(Cuboid::new(CELL_SIZE * 0.95, 0.5, CELL_SIZE * 0.95));
+    let obstacle_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.6, 0.15, 0.15),
+        ..default()
+    });
+    for (x, y) in grid.obstacle_positions() {
+        commands.spawn((
+            Mesh3d(obstacle_mesh.clone()),
+            MeshMaterial3d(obstacle_mat.clone()),
+            Transform::from_xyz(x as f32 * CELL_SIZE, 0.25, y as f32 * CELL_SIZE),
+        ));
+    }
+
+    // ── Goal marker ─────────────────────────────────────
     commands.spawn((
         Mesh3d(meshes.add(Cylinder::new(0.3, 0.6))),
         MeshMaterial3d(materials.add(StandardMaterial {
@@ -150,7 +200,7 @@ fn setup(
         GoalMarker,
     ));
 
-    // Agent cubes.
+    // ── Agent cubes ─────────────────────────────────────
     let agent_mesh = meshes.add(Cuboid::new(0.4, 0.4, 0.4));
     for kind in [AgentKind::Fsm, AgentKind::AStar, AgentKind::BehaviorTree] {
         let color = agent_color(kind);
@@ -161,40 +211,71 @@ fn setup(
                 base_color: color,
                 ..default()
             })),
-            Transform::from_translation(grid_to_world(pos)),
+            Transform::from_translation(grid_to_world(pos, agent_y_offset(kind))),
             AgentMarker { kind },
             Visibility::Visible,
         ));
     }
 
-    // Light.
+    // ── Light ───────────────────────────────────────────
     commands.spawn((
         PointLight {
             shadows_enabled: true,
-            intensity: 3_000_000.0,
-            range: 50.0,
+            intensity: 4_000_000.0,
+            range: 60.0,
             ..default()
         },
         Transform::from_xyz(
             GRID_W as f32 * 0.5,
-            12.0,
+            14.0,
             GRID_H as f32 * 0.5,
         ),
     ));
 
-    // Camera — isometric-ish view.
-    let center = Vec3::new(
-        (GRID_W as f32 - 1.0) * CELL_SIZE * 0.5,
+    // ── Orbital camera ──────────────────────────────────
+    let focus = Vec3::new(
+        (GRID_W as f32 - 1.0) * 0.5,
         0.0,
-        (GRID_H as f32 - 1.0) * CELL_SIZE * 0.5,
+        (GRID_H as f32 - 1.0) * 0.5,
+    );
+    let radius = 14.0;
+    let yaw: f32 = -0.6;
+    let pitch: f32 = 0.7;
+
+    let cam_pos = focus + Vec3::new(
+        radius * pitch.cos() * yaw.sin(),
+        radius * pitch.sin(),
+        radius * pitch.cos() * yaw.cos(),
     );
     commands.spawn((
         Camera3d::default(),
-        Transform::from_xyz(center.x - 6.0, 10.0, center.z + 10.0)
-            .looking_at(center, Vec3::Y),
+        Transform::from_translation(cam_pos).looking_at(focus, Vec3::Y),
+        OrbitCamera {
+            focus,
+            radius,
+            yaw,
+            pitch,
+        },
     ));
 
-    // Simulation state resource.
+    // ── HUD overlay ─────────────────────────────────────
+    commands.spawn((
+        Text::new("Tick: 0"),
+        TextFont {
+            font_size: 20.0,
+            ..default()
+        },
+        TextColor(Color::WHITE),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(10.0),
+            left: Val::Px(10.0),
+            ..default()
+        },
+        HudText,
+    ));
+
+    // ── Simulation state ────────────────────────────────
     let fsm = FSMAgent::with_config(0, 0, 0.15, 10, 0.995);
     let astar = AStarAgent::with_config(0, 0, Some(30), 0.1, 10, 0.995);
     let bt = BehaviorTreeAgent::with_config(0, 0, 0.15, 10, 0.995);
@@ -213,6 +294,45 @@ fn setup(
     });
 }
 
+// ─── Orbital camera ─────────────────────────────────────────
+fn orbit_camera(
+    mouse_button: Res<ButtonInput<MouseButton>>,
+    mut mouse_motion: EventReader<MouseMotion>,
+    mut scroll_events: EventReader<MouseWheel>,
+    mut query: Query<(&mut OrbitCamera, &mut Transform)>,
+) {
+    let mut rotation_delta = Vec2::ZERO;
+    let mut zoom_delta: f32 = 0.0;
+
+    if mouse_button.pressed(MouseButton::Left) {
+        for ev in mouse_motion.read() {
+            rotation_delta += ev.delta;
+        }
+    } else {
+        mouse_motion.clear();
+    }
+
+    for ev in scroll_events.read() {
+        match ev.unit {
+            MouseScrollUnit::Line => zoom_delta -= ev.y * 1.0,
+            MouseScrollUnit::Pixel => zoom_delta -= ev.y * 0.05,
+        }
+    }
+
+    for (mut orbit, mut transform) in &mut query {
+        orbit.yaw -= rotation_delta.x * 0.005;
+        orbit.pitch = (orbit.pitch + rotation_delta.y * 0.005).clamp(0.15, 1.4);
+        orbit.radius = (orbit.radius + zoom_delta).clamp(5.0, 30.0);
+
+        let cam_pos = orbit.focus + Vec3::new(
+            orbit.radius * orbit.pitch.cos() * orbit.yaw.sin(),
+            orbit.radius * orbit.pitch.sin(),
+            orbit.radius * orbit.pitch.cos() * orbit.yaw.cos(),
+        );
+        *transform = Transform::from_translation(cam_pos).looking_at(orbit.focus, Vec3::Y);
+    }
+}
+
 // ─── Simulation tick ────────────────────────────────────────
 fn tick_simulation(
     time: Res<Time>,
@@ -227,7 +347,6 @@ fn tick_simulation(
         return;
     }
 
-    // Stop ticking once everyone is done.
     if sim.is_all_done() {
         if !sim.all_done_printed {
             sim.all_done_printed = true;
@@ -238,7 +357,7 @@ fn tick_simulation(
 
     sim.total_ticks += 1;
 
-    // Spawn trail dots for agents that are still active.
+    // Spawn trail dots for active agents.
     let trail_mesh = meshes.add(Sphere::new(0.08));
     let active_agents: Vec<(Position, AgentKind)> = [
         (!sim.fsm_done, sim.fsm.position(), AgentKind::Fsm),
@@ -268,7 +387,7 @@ fn tick_simulation(
         ));
     }
 
-    // Tick only active agents.
+    // Tick active agents.
     let grid = sim.grid.clone();
 
     if !sim.fsm_done {
@@ -313,7 +432,6 @@ fn sync_agents(
         };
 
         if done {
-            // Hide the cube once the agent finishes.
             *visibility = Visibility::Hidden;
             continue;
         }
@@ -324,18 +442,43 @@ fn sync_agents(
             AgentKind::BehaviorTree => sim.bt.position(),
         };
 
-        let target = grid_to_world(pos);
-        // Smooth lerp for fluid movement.
+        let target = grid_to_world(pos, agent_y_offset(marker.kind));
         transform.translation = transform.translation.lerp(target, 0.15);
     }
 }
 
-// ─── Rotate goal marker ────────────────────────────────────
+// ─── Goal rotation ──────────────────────────────────────────
 fn rotate_goal(
     time: Res<Time>,
     mut query: Query<&mut Transform, With<GoalMarker>>,
 ) {
     for mut transform in &mut query {
         transform.rotate_y(time.delta_secs() * 1.5);
+    }
+}
+
+// ─── HUD update ─────────────────────────────────────────────
+fn update_hud(
+    sim: Res<SimState>,
+    mut query: Query<&mut Text, With<HudText>>,
+) {
+    let status = |done: bool, pos: Position, label: &str| -> String {
+        if done {
+            format!("{}: ✓ Done", label)
+        } else {
+            format!("{}: ({},{})", label, pos.x, pos.y)
+        }
+    };
+
+    let hud = format!(
+        "Tick: {}\n{}\n{}\n{}",
+        sim.total_ticks,
+        status(sim.fsm_done, sim.fsm.position(), "FSM"),
+        status(sim.astar_done, sim.astar.position(), "A*"),
+        status(sim.bt_done, sim.bt.position(), "BT"),
+    );
+
+    for mut text in &mut query {
+        **text = hud.clone();
     }
 }

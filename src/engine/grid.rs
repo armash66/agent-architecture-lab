@@ -69,4 +69,44 @@ impl Grid {
         let mut rng = rand::thread_rng();
         candidates.choose(&mut rng).copied()
     }
+
+    /// Set a cell's walkability. No-op if out of bounds.
+    pub fn set_walkable(&mut self, x: usize, y: usize, walkable: bool) {
+        if x < self.width && y < self.height {
+            self.tiles[y][x] = walkable;
+        }
+    }
+
+    /// Scatter random obstacles across the grid.
+    /// `density` is the fraction of cells to block (0.0–1.0).
+    /// The start cell (0,0) and the goal cell are always kept walkable.
+    pub fn scatter_obstacles(&mut self, density: f32) {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+
+        for y in 0..self.height {
+            for x in 0..self.width {
+                // Never block start or goal.
+                if (x == 0 && y == 0) || (x == self.goal.x && y == self.goal.y) {
+                    continue;
+                }
+                if rng.r#gen::<f32>() < density {
+                    self.tiles[y][x] = false;
+                }
+            }
+        }
+    }
+
+    /// Return all obstacle positions (non-walkable cells).
+    pub fn obstacle_positions(&self) -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        for y in 0..self.height {
+            for x in 0..self.width {
+                if !self.tiles[y][x] {
+                    out.push((x, y));
+                }
+            }
+        }
+        out
+    }
 }
