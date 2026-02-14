@@ -11,7 +11,7 @@ use bevy::prelude::*;
 use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
 use bevy::math::Isometry3d;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use rand::Rng;
 
 use cognitive_grid::agents::fsm::{FSMAgent, FSMState};
@@ -35,7 +35,7 @@ struct AgentMarker {
     kind: AgentKind,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum AgentKind {
     Fsm,
     AStar,
@@ -94,19 +94,23 @@ struct SimState {
     astar_done: bool,
     bt_done: bool,
     all_done_printed: bool,
-    // Heatmap data: (x, y) -> visit count
-    visit_counts: HashMap<(usize, usize), u32>,
+    // Tracks which agents visited a cell: (x, y) -> Set of AgentKinds
+    cell_visitors: HashMap<(usize, usize), HashSet<AgentKind>>,
+    // Flag to trigger visual reset
+    should_reset_visuals: bool,
     // Entity handles for grid tiles allow us to change their color
     grid_tile_entities: Vec<Vec<Entity>>,
 }
 
 #[derive(Resource)]
 struct HeatmapMaterials {
-    low: Handle<StandardMaterial>,
-    med: Handle<StandardMaterial>,
-    high: Handle<StandardMaterial>,
     default_light: Handle<StandardMaterial>,
     default_dark: Handle<StandardMaterial>,
+    // Agent-specific colors
+    fsm_visited: Handle<StandardMaterial>,   // Greenish
+    astar_visited: Handle<StandardMaterial>, // Blueish
+    bt_visited: Handle<StandardMaterial>,    // Orangeish
+    multi_visited: Handle<StandardMaterial>, // Mixed / Grey
 }
 
 impl SimState {
@@ -114,9 +118,12 @@ impl SimState {
         self.fsm_done && self.astar_done && self.bt_done
     }
 
-    fn update_visits(&mut self, pos: Position) {
+    fn update_visits(&mut self, pos: Position, kind: AgentKind) {
         if self.grid.is_walkable(pos.x, pos.y) {
-            *self.visit_counts.entry((pos.x, pos.y)).or_insert(0) += 1;
+            self.cell_visitors
+                .entry((pos.x, pos.y))
+                .or_default()
+                .insert(kind);
         }
     }
     
@@ -134,7 +141,8 @@ impl SimState {
         self.astar_done = false;
         self.bt_done = false;
         self.all_done_printed = false;
-        self.visit_counts.clear();
+        self.cell_visitors.clear();
+        self.should_reset_visuals = true;
     }
 }
 
@@ -206,7 +214,7 @@ fn setup(
     let mut grid = Grid::new(GRID_W, GRID_H, goal);
     grid.scatter_obstacles(OBSTACLE_DENSITY);
 
-    // ── Ground plane materials ──────────────────────────
+    // ── Materials ──────────────────────────
     let default_light = materials.add(StandardMaterial {
         base_color: Color::srgb(0.85, 0.85, 0.85),
         ..default()
@@ -215,21 +223,32 @@ fn setup(
         base_color: Color::srgb(0.65, 0.65, 0.70),
         ..default()
     });
-    let low = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.9, 0.9, 0.5), // yellowish
+
+    // Agent-specific trail colors (slightly distinct from agent cubes for tiles)
+    let fsm_visited = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.6, 0.9, 0.7), // light green
         ..default()
     });
-    let med = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.9, 0.7, 0.3), // orangeish
+    let astar_visited = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.6, 0.7, 0.95), // light blue
         ..default()
     });
-    let high = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.9, 0.4, 0.4), // reddish
+    let bt_visited = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.95, 0.7, 0.6), // light orange
+        ..default()
+    });
+    let multi_visited = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.6, 0.5, 0.6), // purple/grey mix
         ..default()
     });
 
     commands.insert_resource(HeatmapMaterials {
-        low, med, high, default_light: default_light.clone(), default_dark: default_dark.clone(),
+        default_light: default_light.clone(),
+        default_dark: default_dark.clone(),
+        fsm_visited,
+        astar_visited,
+        bt_visited,
+        multi_visited,
     });
 
     let cell_mesh = meshes.add(Cuboid::new(CELL_SIZE * 0.95, 0.05, CELL_SIZE * 0.95));
@@ -238,8 +257,7 @@ fn setup(
 
     for y in 0..GRID_H {
         for x in 0..GRID_W {
-            // Spawn tile regardless of obstacle status (we'll just hide/show obstacles on restart)
-            // Obstacles live on top of tiles
+            // Spawn tile regardless of obstacle status
             let mat = if (x + y) % 2 == 0 {
                 default_light.clone()
             } else {
@@ -344,7 +362,8 @@ fn setup(
         astar_done: false,
         bt_done: false,
         all_done_printed: false,
-        visit_counts: HashMap::new(),
+        cell_visitors: HashMap::new(),
+        should_reset_visuals: false,
         grid_tile_entities,
     });
 }
@@ -434,42 +453,38 @@ fn render_obstacles(
     mut materials: ResMut<Assets<StandardMaterial>>,
     obstacle_query: Query<Entity, With<Obstacle>>,
 ) {
-    // We only re-render if the grid changed (e.g. on restart) or init
-    // For simplicity, we can verify count or just wipe and recreate if dirty flag (not impl here).
-    // Better approach: check if obstacle count matches sim.grid.
-    // BUT since we just added a restart button, let's just wipe and rebuild every time obstacles change count
-    // or efficiently, strict equality. 
-    // Optimization: sim logic only changes obstacles on restart.
-    // Let's just wipe and respawn if the count doesn't match grid obstacles.
-    
-    let grid_obstacles = sim.grid.obstacle_positions();
-    let current_obstacles = obstacle_query.iter().count();
-
-    // If counts match, assume sync (lazy check). If 0 vs >0, definitely sync.
-    // On restart, old obstacles persist, so we need to clear them if positions changed.
-    // For this prototype, let's just rely on the Restart button handler removing them? 
-    // No, UI system can't easily spawn generic meshes.
-    // Let's just do a naive diff check or fully respawn on restart signal.
-    
-    // Hack: If sim.total_ticks == 0, respawn obstacles.
+    // Only update on fresh start or reset
     if sim.total_ticks == 0 {
-        for entity in &obstacle_query {
-            commands.entity(entity).despawn();
-        }
+        // Only despawn if they exist (to avoid flicker every frame of tick 0)
+        // Check if count mismatches or logic flag?
+        // Simple hack: We cleared sim.grid on reset, so we rebuild.
+        // But render_obstacles runs every frame. We need a way to detect "just reset".
+        // Let's rely on checking if obstacles exist vs grid count.
+        
+        let grid_obstacles = sim.grid.obstacle_positions();
+        let current_count = obstacle_query.iter().count();
 
-        let obstacle_mesh = meshes.add(Cuboid::new(CELL_SIZE * 0.95, 0.5, CELL_SIZE * 0.95));
-        let obstacle_mat = materials.add(StandardMaterial {
-            base_color: Color::srgb(0.6, 0.15, 0.15),
-            ..default()
-        });
+        // If mismatched, rebuild.
+        // (Note: this might rebuild once at startup which is fine)
+        if current_count != grid_obstacles.len() {
+            for entity in &obstacle_query {
+                commands.entity(entity).despawn();
+            }
 
-        for (x, y) in grid_obstacles {
-            commands.spawn((
-                Mesh3d(obstacle_mesh.clone()),
-                MeshMaterial3d(obstacle_mat.clone()),
-                Transform::from_xyz(x as f32 * CELL_SIZE, 0.25, y as f32 * CELL_SIZE),
-                Obstacle,
-            ));
+            let obstacle_mesh = meshes.add(Cuboid::new(CELL_SIZE * 0.95, 0.5, CELL_SIZE * 0.95));
+            let obstacle_mat = materials.add(StandardMaterial {
+                base_color: Color::srgb(0.6, 0.15, 0.15),
+                ..default()
+            });
+
+            for (x, y) in grid_obstacles {
+                commands.spawn((
+                    Mesh3d(obstacle_mesh.clone()),
+                    MeshMaterial3d(obstacle_mat.clone()),
+                    Transform::from_xyz(x as f32 * CELL_SIZE, 0.25, y as f32 * CELL_SIZE),
+                    Obstacle,
+                ));
+            }
         }
     }
 }
@@ -585,7 +600,7 @@ fn tick_simulation(
         if !sim.fsm_done {
             sim.fsm.update(&grid);
             let pos = sim.fsm.position();
-            sim.update_visits(pos);
+            sim.update_visits(pos, AgentKind::Fsm);
             if sim.fsm.state() == FSMState::FoundGoal {
                 sim.fsm_done = true;
                 println!("✓ FSM reached goal at tick {}", sim.total_ticks);
@@ -595,7 +610,7 @@ fn tick_simulation(
         if !sim.astar_done {
             sim.astar.update(&grid);
              let pos = sim.astar.position();
-            sim.update_visits(pos);
+            sim.update_visits(pos, AgentKind::AStar);
             if sim.astar.position() == grid.goal || sim.astar.is_stuck() {
                 sim.astar_done = true;
                 if sim.astar.position() == grid.goal {
@@ -609,7 +624,7 @@ fn tick_simulation(
         if !sim.bt_done {
             sim.bt.update(&grid);
              let pos = sim.bt.position();
-            sim.update_visits(pos);
+            sim.update_visits(pos, AgentKind::BehaviorTree);
             if sim.bt.position() == grid.goal {
                 sim.bt_done = true;
                 println!("✓ BT reached goal at tick {}", sim.total_ticks);
@@ -625,10 +640,6 @@ fn handle_visual_events(
     sim: Res<SimState>,
     query: Query<(Entity, &AgentMarker)>,
 ) {
-    // Only verify events on whole ticks? 
-    // Actually, since we multi-tick, this system runs once per frame. 
-    // Use noise_triggered flag which persists until next update. OK.
-    
     for (entity, marker) in &query {
         let triggered = match marker.kind {
             AgentKind::Fsm => sim.fsm.did_noise_trigger(),
@@ -671,38 +682,58 @@ fn apply_shake(
 }
 
 fn render_heatmap(
-    sim: Res<SimState>,
+    mut sim: ResMut<SimState>, // Mutable for resetting visual flag
     ui_state: Res<UiState>,
     heatmap_mats: Res<HeatmapMaterials>,
     mut query: Query<&mut MeshMaterial3d<StandardMaterial>>,
 ) {
     if !ui_state.show_heatmap {
-        // Reset to default materials if hidden? 
-        // For simplicity, we just stop updating. To properly hide, we'd need to revert.
-        // Let's implement revert logic for toggle.
         return;
     }
 
-    for ((x, y), &count) in &sim.visit_counts {
+    // ─── HANDLE RESET ───────────────────────────────────────
+    if sim.should_reset_visuals {
+        for y in 0..GRID_H {
+            for x in 0..GRID_W {
+                 let entity = sim.grid_tile_entities[y][x];
+                 if entity == Entity::PLACEHOLDER { continue; }
+                 
+                 if let Ok(mut mat) = query.get_mut(entity) {
+                     let new_mat = if (x + y) % 2 == 0 {
+                         heatmap_mats.default_light.clone()
+                     } else {
+                         heatmap_mats.default_dark.clone()
+                     };
+                     if mat.0 != new_mat {
+                         mat.0 = new_mat;
+                     }
+                 }
+            }
+        }
+        sim.should_reset_visuals = false;
+        // Don't return, allow new visits to paint immediately if any
+    }
+
+    // ─── RENDER VISITS ──────────────────────────────────────
+    for ((x, y), visitors) in &sim.cell_visitors {
         if *x >= GRID_W || *y >= GRID_H { continue; }
         
         let entity = sim.grid_tile_entities[*y][*x];
         if entity == Entity::PLACEHOLDER { continue; }
 
         if let Ok(mut mat) = query.get_mut(entity) {
-             let new_mat = if count > 8 {
-                 heatmap_mats.high.clone()
-             } else if count > 4 {
-                 heatmap_mats.med.clone()
-             } else if count > 0 {
-                 heatmap_mats.low.clone()
-             } else {
-                 if (x + y) % 2 == 0 {
-                     heatmap_mats.default_light.clone()
-                 } else {
-                     heatmap_mats.default_dark.clone()
-                 }
-             };
+            let new_mat = if visitors.len() > 1 {
+                heatmap_mats.multi_visited.clone()
+            } else if visitors.contains(&AgentKind::Fsm) {
+                heatmap_mats.fsm_visited.clone()
+            } else if visitors.contains(&AgentKind::AStar) {
+                heatmap_mats.astar_visited.clone()
+            } else if visitors.contains(&AgentKind::BehaviorTree) {
+                heatmap_mats.bt_visited.clone()
+            } else {
+                // Determine pattern if no visitors (shouldn't happen in this loop)
+                if (x + y) % 2 == 0 { heatmap_mats.default_light.clone() } else { heatmap_mats.default_dark.clone() }
+            };
              
              if mat.0 != new_mat {
                  mat.0 = new_mat;
@@ -759,6 +790,8 @@ fn sync_agents(
             *visibility = Visibility::Hidden;
             continue;
         }
+
+        *visibility = Visibility::Visible;
 
         let pos = match marker.kind {
             AgentKind::Fsm => sim.fsm.position(),
