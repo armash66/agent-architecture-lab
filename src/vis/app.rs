@@ -1,10 +1,10 @@
 use bevy::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use crate::engine::world::{Grid, Position};
 use crate::agents::fsm::FSMAgent;
 use crate::agents::astar::AStarAgent;
 use crate::agents::behavior_tree::BehaviorTreeAgent;
-use super::resources::{UiState, SimState, HeatmapMaterials};
+use super::resources::{SimState, HeatmapMaterials};
 use super::components::{AgentKind, AgentMarker, OrbitCamera, GoalMarker};
 
 // Constants replicated for setup. Ideally these should be in a shared config or passed in.

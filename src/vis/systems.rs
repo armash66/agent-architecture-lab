@@ -14,7 +14,7 @@ const BASE_TICK_INTERVAL: f32 = 0.25;
 const AGENT_Y: f32 = 0.35;
 const GRID_W: usize = 12;
 const GRID_H: usize = 8;
-const OBSTACLE_DENSITY: f32 = 0.15;
+const MAX_TICKS: u32 = 1000;
 
 fn grid_to_world(pos: Position, y_offset: f32) -> Vec3 {
     Vec3::new(
@@ -61,6 +61,14 @@ pub fn tick_simulation(
             if !sim.all_done_printed {
                 sim.all_done_printed = true;
                 println!("=== All agents reached the goal in {} ticks ===", sim.total_ticks);
+            }
+            continue;
+        }
+
+        if sim.total_ticks >= MAX_TICKS {
+             if !sim.all_done_printed {
+                sim.all_done_printed = true;
+                println!("=== Timeout! Max ticks ({}) reached ===", MAX_TICKS);
             }
             continue;
         }

@@ -9,7 +9,7 @@ pub fn ui_system(
     mut ui_state: ResMut<UiState>,
     mut sim: ResMut<SimState>,
     mut commands: Commands,
-    obstacle_query: Query<Entity, With<Obstacle>>,
+    _obstacle_query: Query<Entity, With<Obstacle>>,
     trail_query: Query<Entity, With<TrailDot>>,
 ) {
     let ctx = contexts.ctx_mut();
