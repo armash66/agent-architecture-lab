@@ -8,11 +8,16 @@
 
 use bevy::prelude::*;
 use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
+use bevy::math::Isometry3d;
+use std::collections::HashMap;
+use rand::Rng;
 
 use cognitive_grid::agents::fsm::{FSMAgent, FSMState};
 use cognitive_grid::agents::astar::AStarAgent;
 use cognitive_grid::agents::behavior_tree::BehaviorTreeAgent;
 use cognitive_grid::engine::world::{Grid, Position};
+// Trait must be imported to use methods like did_noise_trigger()
+use cognitive_grid::agents::Agent; 
 
 // ─── Constants ──────────────────────────────────────────────
 const GRID_W: usize = 12;
@@ -52,6 +57,12 @@ struct OrbitCamera {
     pitch: f32, // radians
 }
 
+#[derive(Component)]
+struct Shaking {
+    timer: Timer,
+    magnitude: f32,
+}
+
 #[derive(Resource)]
 struct SimState {
     grid: Grid,
@@ -64,11 +75,30 @@ struct SimState {
     astar_done: bool,
     bt_done: bool,
     all_done_printed: bool,
+    // Heatmap data: (x, y) -> visit count
+    visit_counts: HashMap<(usize, usize), u32>,
+    // Entity handles for grid tiles allow us to change their color
+    grid_tile_entities: Vec<Vec<Entity>>,
+}
+
+#[derive(Resource)]
+struct HeatmapMaterials {
+    low: Handle<StandardMaterial>,
+    med: Handle<StandardMaterial>,
+    high: Handle<StandardMaterial>,
+    default_light: Handle<StandardMaterial>,
+    default_dark: Handle<StandardMaterial>,
 }
 
 impl SimState {
     fn is_all_done(&self) -> bool {
         self.fsm_done && self.astar_done && self.bt_done
+    }
+
+    fn update_visits(&mut self, pos: Position) {
+        if self.grid.is_walkable(pos.x, pos.y) {
+            *self.visit_counts.entry((pos.x, pos.y)).or_insert(0) += 1;
+        }
     }
 }
 
@@ -86,14 +116,6 @@ fn agent_color(kind: AgentKind) -> Color {
         AgentKind::Fsm => Color::srgb(0.2, 0.8, 0.4),        // green
         AgentKind::AStar => Color::srgb(0.3, 0.5, 1.0),       // blue
         AgentKind::BehaviorTree => Color::srgb(1.0, 0.4, 0.2), // orange
-    }
-}
-
-fn agent_label(kind: AgentKind) -> &'static str {
-    match kind {
-        AgentKind::Fsm => "FSM",
-        AgentKind::AStar => "A*",
-        AgentKind::BehaviorTree => "BT",
     }
 }
 
@@ -122,8 +144,12 @@ fn main() {
             orbit_camera,
             tick_simulation,
             sync_agents,
+            handle_visual_events,
+            apply_shake,
+            render_heatmap,
             rotate_goal,
             update_hud,
+            draw_gizmos,
         ))
         .run();
 }
@@ -141,16 +167,35 @@ fn setup(
     let mut grid = Grid::new(GRID_W, GRID_H, goal);
     grid.scatter_obstacles(OBSTACLE_DENSITY);
 
-    // ── Ground plane ────────────────────────────────────
-    let cell_mesh = meshes.add(Cuboid::new(CELL_SIZE * 0.95, 0.05, CELL_SIZE * 0.95));
-    let light_mat = materials.add(StandardMaterial {
+    // ── Ground plane materials ──────────────────────────
+    let default_light = materials.add(StandardMaterial {
         base_color: Color::srgb(0.85, 0.85, 0.85),
         ..default()
     });
-    let dark_mat = materials.add(StandardMaterial {
+    let default_dark = materials.add(StandardMaterial {
         base_color: Color::srgb(0.65, 0.65, 0.70),
         ..default()
     });
+    let low = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.9, 0.9, 0.5), // yellowish
+        ..default()
+    });
+    let med = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.9, 0.7, 0.3), // orangeish
+        ..default()
+    });
+    let high = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.9, 0.4, 0.4), // reddish
+        ..default()
+    });
+
+    commands.insert_resource(HeatmapMaterials {
+        low, med, high, default_light: default_light.clone(), default_dark: default_dark.clone(),
+    });
+
+    let cell_mesh = meshes.add(Cuboid::new(CELL_SIZE * 0.95, 0.05, CELL_SIZE * 0.95));
+
+    let mut grid_tile_entities = vec![vec![Entity::PLACEHOLDER; GRID_W]; GRID_H];
 
     for y in 0..GRID_H {
         for x in 0..GRID_W {
@@ -158,15 +203,16 @@ fn setup(
                 continue; // obstacles get their own mesh
             }
             let mat = if (x + y) % 2 == 0 {
-                light_mat.clone()
+                default_light.clone()
             } else {
-                dark_mat.clone()
+                default_dark.clone()
             };
-            commands.spawn((
+            let id = commands.spawn((
                 Mesh3d(cell_mesh.clone()),
                 MeshMaterial3d(mat),
                 Transform::from_xyz(x as f32 * CELL_SIZE, 0.0, y as f32 * CELL_SIZE),
-            ));
+            )).id();
+            grid_tile_entities[y][x] = id;
         }
     }
 
@@ -291,6 +337,8 @@ fn setup(
         astar_done: false,
         bt_done: false,
         all_done_printed: false,
+        visit_counts: HashMap::new(),
+        grid_tile_entities,
     });
 }
 
@@ -392,6 +440,8 @@ fn tick_simulation(
 
     if !sim.fsm_done {
         sim.fsm.update(&grid);
+        let pos = sim.fsm.position();
+        sim.update_visits(pos);
         if sim.fsm.state() == FSMState::FoundGoal {
             sim.fsm_done = true;
             println!("✓ FSM reached goal at tick {}", sim.total_ticks);
@@ -400,6 +450,8 @@ fn tick_simulation(
 
     if !sim.astar_done {
         sim.astar.update(&grid);
+        let pos = sim.astar.position();
+        sim.update_visits(pos);
         if sim.astar.position() == grid.goal || sim.astar.is_stuck() {
             sim.astar_done = true;
             if sim.astar.position() == grid.goal {
@@ -412,9 +464,128 @@ fn tick_simulation(
 
     if !sim.bt_done {
         sim.bt.update(&grid);
+        let pos = sim.bt.position();
+        sim.update_visits(pos);
         if sim.bt.position() == grid.goal {
             sim.bt_done = true;
             println!("✓ BT reached goal at tick {}", sim.total_ticks);
+        }
+    }
+}
+
+// ─── Visual Features (Polish) ──────────────────────────────
+
+fn handle_visual_events(
+    mut commands: Commands,
+    sim: Res<SimState>,
+    query: Query<(Entity, &AgentMarker)>,
+) {
+    if !sim.tick_timer.just_finished() {
+        return;
+    }
+
+    for (entity, marker) in &query {
+        let triggered = match marker.kind {
+            AgentKind::Fsm => sim.fsm.did_noise_trigger(),
+            AgentKind::AStar => sim.astar.did_noise_trigger(),
+            AgentKind::BehaviorTree => sim.bt.did_noise_trigger(),
+        };
+
+        if triggered {
+            // Start shaking
+            commands.entity(entity).insert(Shaking {
+                timer: Timer::from_seconds(0.4, TimerMode::Once),
+                magnitude: 0.15,
+            });
+        }
+    }
+}
+
+fn apply_shake(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut Transform, &mut Shaking)>,
+) {
+    let mut rng = rand::thread_rng();
+
+    for (entity, mut transform, mut shaking) in &mut query {
+        shaking.timer.tick(time.delta());
+
+        if shaking.timer.finished() {
+            commands.entity(entity).remove::<Shaking>();
+        } else {
+            // Jiggle
+            let offset = Vec3::new(
+                rng.gen_range(-shaking.magnitude..shaking.magnitude),
+                rng.gen_range(0.0..shaking.magnitude),
+                rng.gen_range(-shaking.magnitude..shaking.magnitude),
+            );
+            transform.translation += offset;
+        }
+    }
+}
+
+fn render_heatmap(
+    sim: Res<SimState>,
+    heatmap_mats: Res<HeatmapMaterials>,
+    mut query: Query<&mut MeshMaterial3d<StandardMaterial>>,
+) {
+    // Only update when tick happens to save perf
+    if !sim.tick_timer.just_finished() {
+        return;
+    }
+
+    for ((x, y), &count) in &sim.visit_counts {
+        if *x >= GRID_W || *y >= GRID_H { continue; }
+        
+        let entity = sim.grid_tile_entities[*y][*x];
+        if entity == Entity::PLACEHOLDER { continue; }
+
+        if let Ok(mut mat) = query.get_mut(entity) {
+             let new_mat = if count > 8 {
+                 heatmap_mats.high.clone()
+             } else if count > 4 {
+                 heatmap_mats.med.clone()
+             } else if count > 0 {
+                 heatmap_mats.low.clone()
+             } else {
+                 if (x + y) % 2 == 0 {
+                     heatmap_mats.default_light.clone()
+                 } else {
+                     heatmap_mats.default_dark.clone()
+                 }
+             };
+             
+             if mat.0 != new_mat {
+                 mat.0 = new_mat;
+             }
+        }
+    }
+}
+
+fn draw_gizmos(
+    mut gizmos: Gizmos,
+    sim: Res<SimState>,
+    query: Query<(&AgentMarker, &Transform, &Visibility)>,
+) {
+    for (marker, transform, vis) in &query {
+        if vis == Visibility::Hidden { continue; }
+
+        let radius = match marker.kind {
+            AgentKind::Fsm => sim.fsm.planning_radius(),
+            AgentKind::AStar => sim.astar.planning_radius(),
+            AgentKind::BehaviorTree => sim.bt.planning_radius(),
+        };
+
+        if let Some(r) = radius {
+            let rotation = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+            let isometry = Isometry3d::new(transform.translation, rotation);
+            
+            gizmos.circle(
+                isometry,
+                r,
+                Color::srgb(0.3, 0.5, 1.0).with_alpha(0.5),
+            );
         }
     }
 }
@@ -443,6 +614,7 @@ fn sync_agents(
         };
 
         let target = grid_to_world(pos, agent_y_offset(marker.kind));
+        // We use lerp for smooth aesthetic, but Shaking system will add noise on top
         transform.translation = transform.translation.lerp(target, 0.15);
     }
 }

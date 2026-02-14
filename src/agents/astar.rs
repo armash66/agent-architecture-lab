@@ -17,6 +17,7 @@ pub struct AStarAgent {
     exploration_rate: f32,
     decay_rate: f32,
     memory: SpatialMemory,
+    noise_triggered: bool,
 }
 
 impl AStarAgent {
@@ -34,6 +35,7 @@ impl AStarAgent {
             exploration_rate: 1.0,
             decay_rate: 1.0,
             memory: SpatialMemory::new(0),
+            noise_triggered: false,
         }
     }
 
@@ -59,6 +61,7 @@ impl AStarAgent {
             noise,
             decay_rate,
             memory: SpatialMemory::new(memory_capacity),
+            noise_triggered: false,
             ..Self::new(start_x, start_y)
         }
     }
@@ -75,6 +78,7 @@ impl AStarAgent {
     /// Update the agent: if we don't have a path, compute one.
     /// Then advance one step along the path toward the goal.
     pub fn update(&mut self, grid: &Grid) {
+        self.noise_triggered = false;
         // Record current position in memory.
         self.memory.record(self.pos);
 
@@ -128,6 +132,7 @@ impl AStarAgent {
                     self.pos = Position { x: nx, y: ny };
                     // Invalidate path so we re-plan next tick.
                     self.path.clear();
+                    self.noise_triggered = true;
                     println!("A*: Noise! Random move to ({}, {})", nx, ny);
                     return;
                 }
@@ -168,6 +173,15 @@ impl super::Agent for AStarAgent {
         } else {
             format!("Path len: {}", self.path.len())
         }
+        }
+
+
+    fn did_noise_trigger(&self) -> bool {
+        self.noise_triggered
+    }
+
+    fn planning_radius(&self) -> Option<f32> {
+        self.planning_limit.map(|l| l as f32)
     }
 }
 

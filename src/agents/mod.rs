@@ -8,6 +8,10 @@ pub trait Agent {
     fn is_stuck(&self) -> bool { false }
     fn energy(&self) -> Option<u32> { None }
     fn debug_state(&self) -> String { String::new() }
+    
+    // Visual feedback hooks
+    fn did_noise_trigger(&self) -> bool { false }
+    fn planning_radius(&self) -> Option<f32> { None }
 }
 
 pub mod fsm;

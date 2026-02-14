@@ -33,6 +33,8 @@ pub struct FSMAgent {
     decay_rate: f32,
     /// Visited-cell memory with bounded capacity.
     memory: SpatialMemory,
+    /// Did the last update trigger a random noise move?
+    noise_triggered: bool,
 }
 
 impl FSMAgent {
@@ -49,6 +51,7 @@ impl FSMAgent {
             exploration_rate: 1.0,
             decay_rate: 1.0,
             memory: SpatialMemory::new(0),
+            noise_triggered: false,
         }
     }
 
@@ -117,6 +120,7 @@ impl FSMAgent {
     /// Update the FSM: handle transitions, perform actions,
     /// and print state changes.
     pub fn update(&mut self, grid: &Grid) {
+        self.noise_triggered = false;
         // Record current position in memory.
         self.memory.record(self.pos);
 
@@ -162,6 +166,7 @@ impl FSMAgent {
                 if self.energy > 0 {
                     self.energy -= 1;
                 }
+                self.noise_triggered = true;
                 println!("FSM: Noise! Random move to ({}, {})", nx, ny);
                 return;
             }
@@ -249,6 +254,10 @@ impl super::Agent for FSMAgent {
 
     fn debug_state(&self) -> String {
         format!("{:?}", self.state)
+    }
+
+    fn did_noise_trigger(&self) -> bool {
+        self.noise_triggered
     }
 }
 

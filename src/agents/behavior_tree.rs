@@ -82,6 +82,7 @@ pub struct BehaviorTreeAgent {
     exploration_rate: f32,
     decay_rate: f32,
     memory: SpatialMemory,
+    noise_triggered: bool,
 }
 
 impl BehaviorTreeAgent {
@@ -106,6 +107,7 @@ impl BehaviorTreeAgent {
             exploration_rate: 1.0,
             decay_rate: 1.0,
             memory: SpatialMemory::new(0),
+            noise_triggered: false,
         }
     }
 
@@ -129,6 +131,7 @@ impl BehaviorTreeAgent {
             noise,
             decay_rate,
             memory: SpatialMemory::new(memory_capacity),
+            noise_triggered: false,
             ..Self::new(start_x, start_y)
         }
     }
@@ -143,6 +146,7 @@ impl BehaviorTreeAgent {
 
     /// Advance the behavior tree by one tick.
     pub fn update(&mut self, grid: &Grid) {
+        self.noise_triggered = false;
         // Record current position in memory.
         self.memory.record(self.pos);
 
@@ -156,6 +160,7 @@ impl BehaviorTreeAgent {
             if let Some((nx, ny)) = grid.random_walkable_neighbor(self.pos.x, self.pos.y) {
                 self.pos = Position { x: nx, y: ny };
                 self.energy = self.energy.saturating_sub(1);
+                self.noise_triggered = true;
                 println!("BT: Noise! Random move to ({}, {})", nx, ny);
                 return;
             }
@@ -197,6 +202,10 @@ impl super::Agent for BehaviorTreeAgent {
 
     fn debug_state(&self) -> String {
         "Running".to_string() // BT doesn't have a single state enum like FSM
+    }
+
+    fn did_noise_trigger(&self) -> bool {
+        self.noise_triggered
     }
 }
 
